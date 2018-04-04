@@ -2,7 +2,6 @@ package manager
 
 import (
 	"crypto/tls"
-	"crypto/x509"
 	"encoding/pem"
 	"fmt"
 	"net"
@@ -13,12 +12,12 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/cloudflare/cfssl/helpers"
 	"github.com/docker/docker/pkg/plugingetter"
 	"github.com/docker/go-events"
 	gmetrics "github.com/docker/go-metrics"
 	"github.com/docker/swarmkit/api"
 	"github.com/docker/swarmkit/ca"
+	"github.com/docker/swarmkit/ca/keyutils"
 	"github.com/docker/swarmkit/connectionbroker"
 	"github.com/docker/swarmkit/identity"
 	"github.com/docker/swarmkit/log"
@@ -38,6 +37,7 @@ import (
 	"github.com/docker/swarmkit/manager/resourceapi"
 	"github.com/docker/swarmkit/manager/scheduler"
 	"github.com/docker/swarmkit/manager/state/raft"
+	"github.com/docker/swarmkit/manager/state/raft/transport"
 	"github.com/docker/swarmkit/manager/state/store"
 	"github.com/docker/swarmkit/manager/watchapi"
 	"github.com/docker/swarmkit/remotes"
@@ -54,9 +54,6 @@ import (
 const (
 	// defaultTaskHistoryRetentionLimit is the number of tasks to keep.
 	defaultTaskHistoryRetentionLimit = 5
-
-	// Default value for grpc max message size.
-	grpcMaxMessageSize = 128 << 20
 )
 
 // RemoteAddrs provides a listening address and an optional advertise address
@@ -234,7 +231,7 @@ func New(config *Config) (*Manager, error) {
 		grpc.Creds(config.SecurityConfig.ServerTLSCreds),
 		grpc.StreamInterceptor(grpc_prometheus.StreamServerInterceptor),
 		grpc.UnaryInterceptor(grpc_prometheus.UnaryServerInterceptor),
-		grpc.MaxMsgSize(grpcMaxMessageSize),
+		grpc.MaxMsgSize(transport.GRPCMaxMsgSize),
 	}
 
 	m := &Manager{
@@ -404,7 +401,7 @@ func (m *Manager) Run(parent context.Context) error {
 		)
 
 		m.raftNode.MemoryStore().View(func(readTx store.ReadTx) {
-			clusters, err = store.FindClusters(readTx, store.ByName("default"))
+			clusters, err = store.FindClusters(readTx, store.ByName(store.DefaultClusterName))
 
 		})
 
@@ -819,10 +816,10 @@ func (m *Manager) rotateRootCAKEK(ctx context.Context, clusterID string) error {
 			return fmt.Errorf("invalid PEM-encoded private key inside of cluster %s", clusterID)
 		}
 
-		if x509.IsEncryptedPEMBlock(keyBlock) {
+		if keyutils.IsEncryptedPEMBlock(keyBlock) {
 			// PEM encryption does not have a digest, so sometimes decryption doesn't
 			// error even with the wrong passphrase.  So actually try to parse it into a valid key.
-			_, err := helpers.ParsePrivateKeyPEMWithPassword(privKeyPEM, []byte(passphrase))
+			_, err := keyutils.ParsePrivateKeyPEMWithPassword(privKeyPEM, []byte(passphrase))
 			if err == nil {
 				// This key is already correctly encrypted with the correct KEK, nothing to do here
 				return nil
@@ -831,7 +828,7 @@ func (m *Manager) rotateRootCAKEK(ctx context.Context, clusterID string) error {
 			// This key is already encrypted, but failed with current main passphrase.
 			// Let's try to decrypt with the previous passphrase, and parse into a valid key, for the
 			// same reason as above.
-			_, err = helpers.ParsePrivateKeyPEMWithPassword(privKeyPEM, []byte(passphrasePrev))
+			_, err = keyutils.ParsePrivateKeyPEMWithPassword(privKeyPEM, []byte(passphrasePrev))
 			if err != nil {
 				// We were not able to decrypt either with the main or backup passphrase, error
 				return err
@@ -839,7 +836,7 @@ func (m *Manager) rotateRootCAKEK(ctx context.Context, clusterID string) error {
 			// ok the above passphrase is correct, so decrypt the PEM block so we can re-encrypt -
 			// since the key was successfully decrypted above, there will be no error doing PEM
 			// decryption
-			unencryptedDER, _ := x509.DecryptPEMBlock(keyBlock, []byte(passphrasePrev))
+			unencryptedDER, _ := keyutils.DecryptPEMBlock(keyBlock, []byte(passphrasePrev))
 			unencryptedKeyBlock := &pem.Block{
 				Type:  keyBlock.Type,
 				Bytes: unencryptedDER,
@@ -954,13 +951,18 @@ func (m *Manager) becomeLeader(ctx context.Context) {
 		// store. Don't check the error because
 		// we expect this to fail unless this
 		// is a brand new cluster.
-		store.CreateCluster(tx, defaultClusterObject(
+		err := store.CreateCluster(tx, defaultClusterObject(
 			clusterID,
 			initialCAConfig,
 			raftCfg,
 			api.EncryptionConfig{AutoLockManagers: m.config.AutoLockManagers},
 			unlockKeys,
 			rootCA))
+
+		if err != nil && err != store.ErrExist {
+			log.G(ctx).WithError(err).Errorf("error creating cluster object")
+		}
+
 		// Add Node entry for ourself, if one
 		// doesn't exist already.
 		freshCluster := nil == store.CreateNode(tx, managerNode(nodeID, m.config.Availability))

@@ -4,8 +4,8 @@ import (
 	"testing"
 
 	"github.com/docker/docker/api/types"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
+	"github.com/gotestyourself/gotestyourself/assert"
+	is "github.com/gotestyourself/gotestyourself/assert/cmp"
 )
 
 type fakeStore struct {
@@ -18,6 +18,10 @@ func (f *fakeStore) Save() error {
 
 func (f *fakeStore) GetAuthConfigs() map[string]types.AuthConfig {
 	return f.configs
+}
+
+func (f *fakeStore) GetFilename() string {
+	return "/tmp/docker-fakestore"
 }
 
 func newStore(auths map[string]types.AuthConfig) store {
@@ -34,12 +38,12 @@ func TestFileStoreAddCredentials(t *testing.T) {
 		ServerAddress: "https://example.com",
 	}
 	err := s.Store(auth)
-	require.NoError(t, err)
-	assert.Len(t, f.GetAuthConfigs(), 1)
+	assert.NilError(t, err)
+	assert.Check(t, is.Len(f.GetAuthConfigs(), 1))
 
 	actual, ok := f.GetAuthConfigs()["https://example.com"]
-	assert.True(t, ok)
-	assert.Equal(t, auth, actual)
+	assert.Check(t, ok)
+	assert.Check(t, is.DeepEqual(auth, actual))
 }
 
 func TestFileStoreGet(t *testing.T) {

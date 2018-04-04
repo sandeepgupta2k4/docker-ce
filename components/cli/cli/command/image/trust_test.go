@@ -7,12 +7,10 @@ import (
 
 	"github.com/docker/cli/cli/trust"
 	registrytypes "github.com/docker/docker/api/types/registry"
-	"github.com/docker/docker/registry"
-	"github.com/docker/notary/client"
-	"github.com/docker/notary/passphrase"
-	"github.com/docker/notary/trustpinning"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
+	"github.com/gotestyourself/gotestyourself/assert"
+	"github.com/theupdateframework/notary/client"
+	"github.com/theupdateframework/notary/passphrase"
+	"github.com/theupdateframework/notary/trustpinning"
 )
 
 func unsetENV() {
@@ -48,8 +46,8 @@ func TestHTTPENVTrustServer(t *testing.T) {
 func TestOfficialTrustServer(t *testing.T) {
 	indexInfo := &registrytypes.IndexInfo{Name: "testserver", Official: true}
 	output, err := trust.Server(indexInfo)
-	if err != nil || output != registry.NotaryServer {
-		t.Fatalf("Expected server to be %s, got %s", registry.NotaryServer, output)
+	if err != nil || output != trust.NotaryServer {
+		t.Fatalf("Expected server to be %s, got %s", trust.NotaryServer, output)
 	}
 }
 
@@ -64,12 +62,12 @@ func TestNonOfficialTrustServer(t *testing.T) {
 
 func TestAddTargetToAllSignableRolesError(t *testing.T) {
 	tmpDir, err := ioutil.TempDir("", "notary-test-")
-	assert.NoError(t, err)
+	assert.NilError(t, err)
 	defer os.RemoveAll(tmpDir)
 
 	notaryRepo, err := client.NewFileCachedRepository(tmpDir, "gun", "https://localhost", nil, passphrase.ConstantRetriever("password"), trustpinning.TrustPinConfig{})
-	require.NoError(t, err)
+	assert.NilError(t, err)
 	target := client.Target{}
 	err = AddTargetToAllSignableRoles(notaryRepo, &target)
-	assert.EqualError(t, err, "client is offline")
+	assert.Error(t, err, "client is offline")
 }

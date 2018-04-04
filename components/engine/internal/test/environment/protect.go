@@ -1,4 +1,4 @@
-package environment
+package environment // import "github.com/docker/docker/internal/test/environment"
 
 import (
 	"context"
@@ -6,9 +6,10 @@ import (
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/filters"
 	dclient "github.com/docker/docker/client"
-	"github.com/docker/docker/integration-cli/fixtures/load"
-	"github.com/stretchr/testify/require"
+	"github.com/gotestyourself/gotestyourself/assert"
 )
+
+var frozenImages = []string{"busybox:latest", "busybox:glibc", "hello-world:frozen", "debian:jessie"}
 
 type protectedElements struct {
 	containers map[string]struct{}
@@ -56,12 +57,12 @@ func ProtectContainers(t testingT, testEnv *Execution) {
 	testEnv.ProtectContainer(t, containers...)
 }
 
-func getExistingContainers(t require.TestingT, testEnv *Execution) []string {
+func getExistingContainers(t assert.TestingT, testEnv *Execution) []string {
 	client := testEnv.APIClient()
 	containerList, err := client.ContainerList(context.Background(), types.ContainerListOptions{
 		All: true,
 	})
-	require.NoError(t, err, "failed to list containers")
+	assert.NilError(t, err, "failed to list containers")
 
 	containers := []string{}
 	for _, container := range containerList {
@@ -83,12 +84,12 @@ func ProtectImages(t testingT, testEnv *Execution) {
 	images := getExistingImages(t, testEnv)
 
 	if testEnv.OSType == "linux" {
-		images = append(images, ensureFrozenImagesLinux(t, testEnv)...)
+		images = append(images, frozenImages...)
 	}
 	testEnv.ProtectImage(t, images...)
 }
 
-func getExistingImages(t require.TestingT, testEnv *Execution) []string {
+func getExistingImages(t assert.TestingT, testEnv *Execution) []string {
 	client := testEnv.APIClient()
 	filter := filters.NewArgs()
 	filter.Add("dangling", "false")
@@ -96,7 +97,7 @@ func getExistingImages(t require.TestingT, testEnv *Execution) []string {
 		All:     true,
 		Filters: filter,
 	})
-	require.NoError(t, err, "failed to list images")
+	assert.NilError(t, err, "failed to list images")
 
 	images := []string{}
 	for _, image := range imageList {
@@ -120,15 +121,6 @@ func tagsFromImageSummary(image types.ImageSummary) []string {
 	return result
 }
 
-func ensureFrozenImagesLinux(t testingT, testEnv *Execution) []string {
-	images := []string{"busybox:latest", "hello-world:frozen", "debian:jessie"}
-	err := load.FrozenImagesLinux(testEnv.APIClient(), images...)
-	if err != nil {
-		t.Fatalf("Failed to load frozen images: %s", err)
-	}
-	return images
-}
-
 // ProtectNetwork adds the specified network(s) to be protected in case of
 // clean
 func (e *Execution) ProtectNetwork(t testingT, networks ...string) {
@@ -144,10 +136,10 @@ func ProtectNetworks(t testingT, testEnv *Execution) {
 	testEnv.ProtectNetwork(t, networks...)
 }
 
-func getExistingNetworks(t require.TestingT, testEnv *Execution) []string {
+func getExistingNetworks(t assert.TestingT, testEnv *Execution) []string {
 	client := testEnv.APIClient()
 	networkList, err := client.NetworkList(context.Background(), types.NetworkListOptions{})
-	require.NoError(t, err, "failed to list networks")
+	assert.NilError(t, err, "failed to list networks")
 
 	networks := []string{}
 	for _, network := range networkList {
@@ -170,14 +162,14 @@ func ProtectPlugins(t testingT, testEnv *Execution) {
 	testEnv.ProtectPlugin(t, plugins...)
 }
 
-func getExistingPlugins(t require.TestingT, testEnv *Execution) []string {
+func getExistingPlugins(t assert.TestingT, testEnv *Execution) []string {
 	client := testEnv.APIClient()
 	pluginList, err := client.PluginList(context.Background(), filters.Args{})
 	// Docker EE does not allow cluster-wide plugin management.
 	if dclient.IsErrNotImplemented(err) {
 		return []string{}
 	}
-	require.NoError(t, err, "failed to list plugins")
+	assert.NilError(t, err, "failed to list plugins")
 
 	plugins := []string{}
 	for _, plugin := range pluginList {
@@ -200,10 +192,10 @@ func ProtectVolumes(t testingT, testEnv *Execution) {
 	testEnv.ProtectVolume(t, volumes...)
 }
 
-func getExistingVolumes(t require.TestingT, testEnv *Execution) []string {
+func getExistingVolumes(t assert.TestingT, testEnv *Execution) []string {
 	client := testEnv.APIClient()
 	volumeList, err := client.VolumeList(context.Background(), filters.Args{})
-	require.NoError(t, err, "failed to list volumes")
+	assert.NilError(t, err, "failed to list volumes")
 
 	volumes := []string{}
 	for _, volume := range volumeList.Volumes {

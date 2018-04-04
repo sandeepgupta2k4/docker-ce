@@ -5,7 +5,7 @@
 // factory, which holds the contextual instance information that
 // allows multiple loggers of the same type to perform different
 // actions, such as logging to different locations.
-package logger
+package logger // import "github.com/docker/docker/daemon/logger"
 
 import (
 	"sync"
@@ -42,7 +42,7 @@ func PutMessage(msg *Message) {
 	messagePool.Put(msg)
 }
 
-// Message is datastructure that represents piece of output produced by some
+// Message is data structure that represents piece of output produced by some
 // container.  The Line member is a slice of an array whose contents can be
 // changed after a log driver's Log() method returns.
 //
@@ -78,9 +78,17 @@ type Logger interface {
 	Close() error
 }
 
+// SizedLogger is the interface for logging drivers that can control
+// the size of buffer used for their messages.
+type SizedLogger interface {
+	Logger
+	BufSize() int
+}
+
 // ReadConfig is the configuration passed into ReadLogs.
 type ReadConfig struct {
 	Since  time.Time
+	Until  time.Time
 	Tail   int
 	Follow bool
 }
@@ -125,10 +133,13 @@ func (w *LogWatcher) WatchClose() <-chan struct{} {
 	return w.closeNotifier
 }
 
-// Capability defines the list of capabilties that a driver can implement
+// Capability defines the list of capabilities that a driver can implement
 // These capabilities are not required to be a logging driver, however do
 // determine how a logging driver can be used
 type Capability struct {
 	// Determines if a log driver can read back logs
 	ReadLogs bool
 }
+
+// MarshalFunc is a func that marshals a message into an arbitrary format
+type MarshalFunc func(*Message) ([]byte, error)

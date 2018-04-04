@@ -1,6 +1,4 @@
-// +build !solaris
-
-package registry
+package registry // import "github.com/docker/docker/registry"
 
 import (
 	"encoding/json"

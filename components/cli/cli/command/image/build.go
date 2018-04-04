@@ -9,8 +9,10 @@ import (
 	"io"
 	"io/ioutil"
 	"os"
+	"path/filepath"
 	"regexp"
 	"runtime"
+	"strings"
 
 	"github.com/docker/cli/cli"
 	"github.com/docker/cli/cli/command"
@@ -64,6 +66,8 @@ type buildOptions struct {
 	target         string
 	imageIDFile    string
 	stream         bool
+	platform       string
+	untrusted      bool
 }
 
 // dockerfileFromStdin returns true when the user specified that the Dockerfile
@@ -134,7 +138,8 @@ func NewBuildCommand(dockerCli command.Cli) *cobra.Command {
 	flags.StringVar(&options.target, "target", "", "Set the target build stage to build.")
 	flags.StringVar(&options.imageIDFile, "iidfile", "", "Write the image ID to the file")
 
-	command.AddTrustVerificationFlags(flags)
+	command.AddTrustVerificationFlags(flags, &options.untrusted, dockerCli.ContentTrustEnabled())
+	command.AddPlatformFlag(flags, &options.platform)
 
 	flags.BoolVar(&options.squash, "squash", false, "Squash newly built layers into a single new layer")
 	flags.SetAnnotation("squash", "experimental", nil)
@@ -204,6 +209,14 @@ func runBuild(dockerCli command.Cli, options buildOptions) error {
 		buildCtx, relDockerfile, err = build.GetContextFromReader(dockerCli.In(), options.dockerfileName)
 	case isLocalDir(specifiedContext):
 		contextDir, relDockerfile, err = build.GetContextFromLocalDir(specifiedContext, options.dockerfileName)
+		if err == nil && strings.HasPrefix(relDockerfile, ".."+string(filepath.Separator)) {
+			// Dockerfile is outside of build-context; read the Dockerfile and pass it as dockerfileCtx
+			dockerfileCtx, err = os.Open(options.dockerfileName)
+			if err != nil {
+				return errors.Errorf("unable to open Dockerfile: %v", err)
+			}
+			defer dockerfileCtx.Close()
+		}
 	case urlutil.IsGitURL(specifiedContext):
 		tempDir, relDockerfile, err = build.GetContextFromGitURL(specifiedContext, options.dockerfileName)
 	case urlutil.IsURL(specifiedContext):
@@ -251,7 +264,7 @@ func runBuild(dockerCli command.Cli, options buildOptions) error {
 		}
 	}
 
-	// replace Dockerfile if it was added from stdin and there is archive context
+	// replace Dockerfile if it was added from stdin or a file outside the build-context, and there is archive context
 	if dockerfileCtx != nil && buildCtx != nil {
 		buildCtx, relDockerfile, err = build.AddDockerfileToBuildContext(dockerfileCtx, buildCtx)
 		if err != nil {
@@ -259,7 +272,7 @@ func runBuild(dockerCli command.Cli, options buildOptions) error {
 		}
 	}
 
-	// if streaming and dockerfile was not from stdin then read from file
+	// if streaming and Dockerfile was not from stdin then read from file
 	// to the same reader that is usually stdin
 	if options.stream && dockerfileCtx == nil {
 		dockerfileCtx, err = os.Open(relDockerfile)
@@ -273,7 +286,7 @@ func runBuild(dockerCli command.Cli, options buildOptions) error {
 	defer cancel()
 
 	var resolvedTags []*resolvedTag
-	if command.IsTrusted() {
+	if !options.untrusted {
 		translator := func(ctx context.Context, ref reference.NamedTagged) (reference.Canonical, error) {
 			return TrustedReference(ctx, dockerCli, ref, nil)
 		}
@@ -281,10 +294,10 @@ func runBuild(dockerCli command.Cli, options buildOptions) error {
 		if buildCtx != nil {
 			// Wrap the tar archive to replace the Dockerfile entry with the rewritten
 			// Dockerfile which uses trusted pulls.
-			buildCtx = replaceDockerfileTarWrapper(ctx, buildCtx, relDockerfile, translator, &resolvedTags)
+			buildCtx = replaceDockerfileForContentTrust(ctx, buildCtx, relDockerfile, translator, &resolvedTags)
 		} else if dockerfileCtx != nil {
 			// if there was not archive context still do the possible replacements in Dockerfile
-			newDockerfile, _, err := rewriteDockerfileFrom(ctx, dockerfileCtx, translator)
+			newDockerfile, _, err := rewriteDockerfileFromForContentTrust(ctx, dockerfileCtx, translator)
 			if err != nil {
 				return err
 			}
@@ -305,8 +318,8 @@ func runBuild(dockerCli command.Cli, options buildOptions) error {
 		progressOutput = &lastProgressOutput{output: progressOutput}
 	}
 
-	// if up to this point nothing has set the context then we must have have
-	// another way for sending it(streaming) and set the context to the Dockerfile
+	// if up to this point nothing has set the context then we must have another
+	// way for sending it(streaming) and set the context to the Dockerfile
 	if dockerfileCtx != nil && buildCtx == nil {
 		buildCtx = dockerfileCtx
 	}
@@ -374,6 +387,7 @@ func runBuild(dockerCli command.Cli, options buildOptions) error {
 		ExtraHosts:     options.extraHosts.GetAll(),
 		Target:         options.target,
 		RemoteContext:  remote,
+		Platform:       options.platform,
 	}
 
 	if s != nil {
@@ -447,7 +461,7 @@ func runBuild(dockerCli command.Cli, options buildOptions) error {
 			return err
 		}
 	}
-	if command.IsTrusted() {
+	if !options.untrusted {
 		// Since the build was successful, now we must tag any of the resolved
 		// images from the above Dockerfile rewrite.
 		for _, resolved := range resolvedTags {
@@ -486,11 +500,12 @@ type resolvedTag struct {
 	tagRef    reference.NamedTagged
 }
 
-// rewriteDockerfileFrom rewrites the given Dockerfile by resolving images in
+// rewriteDockerfileFromForContentTrust rewrites the given Dockerfile by resolving images in
 // "FROM <image>" instructions to a digest reference. `translator` is a
 // function that takes a repository name and tag reference and returns a
 // trusted digest reference.
-func rewriteDockerfileFrom(ctx context.Context, dockerfile io.Reader, translator translatorFunc) (newDockerfile []byte, resolvedTags []*resolvedTag, err error) {
+// This should be called *only* when content trust is enabled
+func rewriteDockerfileFromForContentTrust(ctx context.Context, dockerfile io.Reader, translator translatorFunc) (newDockerfile []byte, resolvedTags []*resolvedTag, err error) {
 	scanner := bufio.NewScanner(dockerfile)
 	buf := bytes.NewBuffer(nil)
 
@@ -507,7 +522,7 @@ func rewriteDockerfileFrom(ctx context.Context, dockerfile io.Reader, translator
 				return nil, nil, err
 			}
 			ref = reference.TagNameOnly(ref)
-			if ref, ok := ref.(reference.NamedTagged); ok && command.IsTrusted() {
+			if ref, ok := ref.(reference.NamedTagged); ok {
 				trustedRef, err := translator(ctx, ref)
 				if err != nil {
 					return nil, nil, err
@@ -530,11 +545,10 @@ func rewriteDockerfileFrom(ctx context.Context, dockerfile io.Reader, translator
 	return buf.Bytes(), resolvedTags, scanner.Err()
 }
 
-// replaceDockerfileTarWrapper wraps the given input tar archive stream and
-// replaces the entry with the given Dockerfile name with the contents of the
-// new Dockerfile. Returns a new tar archive stream with the replaced
-// Dockerfile.
-func replaceDockerfileTarWrapper(ctx context.Context, inputTarStream io.ReadCloser, dockerfileName string, translator translatorFunc, resolvedTags *[]*resolvedTag) io.ReadCloser {
+// replaceDockerfileForContentTrust wraps the given input tar archive stream and
+// uses the translator to replace the Dockerfile which uses a trusted reference.
+// Returns a new tar archive stream with the replaced Dockerfile.
+func replaceDockerfileForContentTrust(ctx context.Context, inputTarStream io.ReadCloser, dockerfileName string, translator translatorFunc, resolvedTags *[]*resolvedTag) io.ReadCloser {
 	pipeReader, pipeWriter := io.Pipe()
 	go func() {
 		tarReader := tar.NewReader(inputTarStream)
@@ -561,7 +575,7 @@ func replaceDockerfileTarWrapper(ctx context.Context, inputTarStream io.ReadClos
 				// generated from a directory on the local filesystem, the
 				// Dockerfile will only appear once in the archive.
 				var newDockerfile []byte
-				newDockerfile, *resolvedTags, err = rewriteDockerfileFrom(ctx, content, translator)
+				newDockerfile, *resolvedTags, err = rewriteDockerfileFromForContentTrust(ctx, content, translator)
 				if err != nil {
 					pipeWriter.CloseWithError(err)
 					return

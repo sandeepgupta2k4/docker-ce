@@ -10,8 +10,8 @@ import (
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/swarm"
 	"github.com/docker/docker/pkg/stringid"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
+	"github.com/gotestyourself/gotestyourself/assert"
+	is "github.com/gotestyourself/gotestyourself/assert/cmp"
 )
 
 func TestNodeContext(t *testing.T) {
@@ -74,10 +74,10 @@ func TestNodeContextWrite(t *testing.T) {
 		// Table format
 		{
 			context: Context{Format: NewNodeFormat("table", false)},
-			expected: `ID                  HOSTNAME            STATUS              AVAILABILITY        MANAGER STATUS
-nodeID1             foobar_baz          Foo                 Drain               Leader
-nodeID2             foobar_bar          Bar                 Active              Reachable
-nodeID3             foobar_boo          Boo                 Active              ` + "\n", // (to preserve whitespace)
+			expected: `ID                  HOSTNAME            STATUS              AVAILABILITY        MANAGER STATUS      ENGINE VERSION
+nodeID1             foobar_baz          Foo                 Drain               Leader              18.03.0-ce
+nodeID2             foobar_bar          Bar                 Active              Reachable           1.2.3
+nodeID3             foobar_boo          Boo                 Active                                  ` + "\n", // (to preserve whitespace)
 			clusterInfo: swarm.ClusterInfo{TLSInfo: swarm.TLSInfo{TrustRoot: "hi"}},
 		},
 		{
@@ -172,6 +172,7 @@ foobar_boo  Unknown
 				Description: swarm.NodeDescription{
 					Hostname: "foobar_baz",
 					TLSInfo:  swarm.TLSInfo{TrustRoot: "no"},
+					Engine:   swarm.EngineDescription{EngineVersion: "18.03.0-ce"},
 				},
 				Status:        swarm.NodeStatus{State: swarm.NodeState("foo")},
 				Spec:          swarm.NodeSpec{Availability: swarm.NodeAvailability("drain")},
@@ -182,6 +183,7 @@ foobar_boo  Unknown
 				Description: swarm.NodeDescription{
 					Hostname: "foobar_bar",
 					TLSInfo:  swarm.TLSInfo{TrustRoot: "hi"},
+					Engine:   swarm.EngineDescription{EngineVersion: "1.2.3"},
 				},
 				Status: swarm.NodeStatus{State: swarm.NodeState("bar")},
 				Spec:   swarm.NodeSpec{Availability: swarm.NodeAvailability("active")},
@@ -201,9 +203,9 @@ foobar_boo  Unknown
 		testcase.context.Output = out
 		err := NodeWrite(testcase.context, nodes, types.Info{Swarm: swarm.Info{Cluster: &testcase.clusterInfo}})
 		if err != nil {
-			assert.EqualError(t, err, testcase.expected)
+			assert.Error(t, err, testcase.expected)
 		} else {
-			assert.Equal(t, testcase.expected, out.String())
+			assert.Check(t, is.Equal(testcase.expected, out.String()))
 		}
 	}
 }
@@ -215,17 +217,17 @@ func TestNodeContextWriteJSON(t *testing.T) {
 	}{
 		{
 			expected: []map[string]interface{}{
-				{"Availability": "", "Hostname": "foobar_baz", "ID": "nodeID1", "ManagerStatus": "", "Status": "", "Self": false, "TLSStatus": "Unknown"},
-				{"Availability": "", "Hostname": "foobar_bar", "ID": "nodeID2", "ManagerStatus": "", "Status": "", "Self": false, "TLSStatus": "Unknown"},
-				{"Availability": "", "Hostname": "foobar_boo", "ID": "nodeID3", "ManagerStatus": "", "Status": "", "Self": false, "TLSStatus": "Unknown"},
+				{"Availability": "", "Hostname": "foobar_baz", "ID": "nodeID1", "ManagerStatus": "", "Status": "", "Self": false, "TLSStatus": "Unknown", "EngineVersion": "1.2.3"},
+				{"Availability": "", "Hostname": "foobar_bar", "ID": "nodeID2", "ManagerStatus": "", "Status": "", "Self": false, "TLSStatus": "Unknown", "EngineVersion": ""},
+				{"Availability": "", "Hostname": "foobar_boo", "ID": "nodeID3", "ManagerStatus": "", "Status": "", "Self": false, "TLSStatus": "Unknown", "EngineVersion": "18.03.0-ce"},
 			},
 			info: types.Info{},
 		},
 		{
 			expected: []map[string]interface{}{
-				{"Availability": "", "Hostname": "foobar_baz", "ID": "nodeID1", "ManagerStatus": "", "Status": "", "Self": false, "TLSStatus": "Ready"},
-				{"Availability": "", "Hostname": "foobar_bar", "ID": "nodeID2", "ManagerStatus": "", "Status": "", "Self": false, "TLSStatus": "Needs Rotation"},
-				{"Availability": "", "Hostname": "foobar_boo", "ID": "nodeID3", "ManagerStatus": "", "Status": "", "Self": false, "TLSStatus": "Unknown"},
+				{"Availability": "", "Hostname": "foobar_baz", "ID": "nodeID1", "ManagerStatus": "", "Status": "", "Self": false, "TLSStatus": "Ready", "EngineVersion": "1.2.3"},
+				{"Availability": "", "Hostname": "foobar_bar", "ID": "nodeID2", "ManagerStatus": "", "Status": "", "Self": false, "TLSStatus": "Needs Rotation", "EngineVersion": ""},
+				{"Availability": "", "Hostname": "foobar_boo", "ID": "nodeID3", "ManagerStatus": "", "Status": "", "Self": false, "TLSStatus": "Unknown", "EngineVersion": "18.03.0-ce"},
 			},
 			info: types.Info{
 				Swarm: swarm.Info{
@@ -240,9 +242,9 @@ func TestNodeContextWriteJSON(t *testing.T) {
 
 	for _, testcase := range cases {
 		nodes := []swarm.Node{
-			{ID: "nodeID1", Description: swarm.NodeDescription{Hostname: "foobar_baz", TLSInfo: swarm.TLSInfo{TrustRoot: "hi"}}},
+			{ID: "nodeID1", Description: swarm.NodeDescription{Hostname: "foobar_baz", TLSInfo: swarm.TLSInfo{TrustRoot: "hi"}, Engine: swarm.EngineDescription{EngineVersion: "1.2.3"}}},
 			{ID: "nodeID2", Description: swarm.NodeDescription{Hostname: "foobar_bar", TLSInfo: swarm.TLSInfo{TrustRoot: "no"}}},
-			{ID: "nodeID3", Description: swarm.NodeDescription{Hostname: "foobar_boo"}},
+			{ID: "nodeID3", Description: swarm.NodeDescription{Hostname: "foobar_boo", Engine: swarm.EngineDescription{EngineVersion: "18.03.0-ce"}}},
 		}
 		out := bytes.NewBufferString("")
 		err := NodeWrite(Context{Format: "{{json .}}", Output: out}, nodes, testcase.info)
@@ -253,8 +255,8 @@ func TestNodeContextWriteJSON(t *testing.T) {
 			msg := fmt.Sprintf("Output: line %d: %s", i, line)
 			var m map[string]interface{}
 			err := json.Unmarshal([]byte(line), &m)
-			require.NoError(t, err, msg)
-			assert.Equal(t, testcase.expected[i], m, msg)
+			assert.NilError(t, err, msg)
+			assert.Check(t, is.DeepEqual(testcase.expected[i], m), msg)
 		}
 	}
 }
@@ -273,8 +275,8 @@ func TestNodeContextWriteJSONField(t *testing.T) {
 		msg := fmt.Sprintf("Output: line %d: %s", i, line)
 		var s string
 		err := json.Unmarshal([]byte(line), &s)
-		require.NoError(t, err, msg)
-		assert.Equal(t, nodes[i].ID, s, msg)
+		assert.NilError(t, err, msg)
+		assert.Check(t, is.Equal(nodes[i].ID, s), msg)
 	}
 }
 
@@ -342,5 +344,5 @@ data
  Issuer Subject:	c3ViamVjdA==
  Issuer Public Key:	cHViS2V5
 `
-	assert.Equal(t, expected, out.String())
+	assert.Check(t, is.Equal(expected, out.String()))
 }

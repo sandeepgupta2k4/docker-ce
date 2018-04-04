@@ -1,10 +1,9 @@
 ---
-title: "Docker run reference"
 description: "Configure containers at runtime"
 keywords: "docker, run, configure, runtime"
 ---
 
-<!-- This file is maintained within the docker/cli Github
+<!-- This file is maintained within the docker/cli GitHub
      repository at https://github.com/docker/cli/. Make all
      pull requests against that repo. If you see this file in
      another repository, consider it read-only there, as it will
@@ -526,9 +525,9 @@ Docker supports the following restart policies:
     <tr>
       <td><strong>unless-stopped</strong></td>
       <td>
-        Always restart the container regardless of the exit status, but
-        do not start it on daemon startup if the container has been put
-        to a stopped state before.
+        Always restart the container regardless of the exit status,
+        including on daemon startup, except if the container was put
+        into a stopped state before the Docker daemon was stopped.
       </td>
     </tr>
   </tbody>
@@ -621,9 +620,9 @@ systems can really pile up. If instead you'd like Docker to
 **automatically clean up the container and remove the file system when
 the container exits**, you can add the `--rm` flag:
 
-    --rm=false: Automatically remove the container when it exits (incompatible with -d)
+    --rm=false: Automatically remove the container when it exits
 
-> **Note**: When you set the `--rm` flag, Docker also removes the volumes
+> **Note**: When you set the `--rm` flag, Docker also removes the anonymous volumes
 associated with the container when the container is removed. This is similar
 to running `docker rm -v my-container`. Only volumes that are specified without a
 name are removed. For example, with
@@ -1199,8 +1198,8 @@ The next table shows the capabilities which are not granted by default and may b
 | SYS_TIME        | Set system clock (settimeofday(2), stime(2), adjtimex(2)); set real-time (hardware) clock.                      |
 | SYS_TTY_CONFIG  | Use vhangup(2); employ various privileged ioctl(2) operations on virtual terminals.                             |
 | AUDIT_CONTROL   | Enable and disable kernel auditing; change auditing filter rules; retrieve auditing status and filtering rules. |
-| MAC_OVERRIDE    | Allow MAC configuration or state changes. Implemented for the Smack LSM.                                        |
-| MAC_ADMIN       | Override Mandatory Access Control (MAC). Implemented for the Smack Linux Security Module (LSM).                 |
+| MAC_ADMIN       | Allow MAC configuration or state changes. Implemented for the Smack LSM.                                        |
+| MAC_OVERRIDE    | Override Mandatory Access Control (MAC). Implemented for the Smack Linux Security Module (LSM).                 |
 | NET_ADMIN       | Perform various network-related operations.                                                                     |
 | SYSLOG          | Perform privileged syslog(2) operations.                                                                        |
 | DAC_READ_SEARCH | Bypass file read permission checks and directory read and execute permission checks.                            |

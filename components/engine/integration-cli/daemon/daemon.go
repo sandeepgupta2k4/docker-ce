@@ -1,7 +1,6 @@
-package daemon
+package daemon // import "github.com/docker/docker/integration-cli/daemon"
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -14,7 +13,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/docker/docker/api"
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/events"
 	"github.com/docker/docker/client"
@@ -26,14 +24,14 @@ import (
 	"github.com/docker/go-connections/sockets"
 	"github.com/docker/go-connections/tlsconfig"
 	"github.com/go-check/check"
+	"github.com/gotestyourself/gotestyourself/assert"
 	"github.com/gotestyourself/gotestyourself/icmd"
 	"github.com/pkg/errors"
-	"github.com/stretchr/testify/require"
 	"golang.org/x/net/context"
 )
 
 type testingT interface {
-	require.TestingT
+	assert.TestingT
 	logT
 	Fatalf(string, ...interface{})
 }
@@ -222,7 +220,7 @@ func (d *Daemon) StartWithLogFile(out *os.File, providedArgs ...string) error {
 		return errors.Wrapf(err, "[%s] could not find docker binary in $PATH", d.id)
 	}
 	args := append(d.GlobalFlags,
-		"--containerd", "/var/run/docker/libcontainerd/docker-containerd.sock",
+		"--containerd", "/var/run/docker/containerd/docker-containerd.sock",
 		"--data-root", d.Root,
 		"--exec-root", d.execRoot,
 		"--pidfile", fmt.Sprintf("%s/docker.pid", d.Folder),
@@ -348,11 +346,7 @@ func (d *Daemon) Kill() error {
 		return err
 	}
 
-	if err := os.Remove(fmt.Sprintf("%s/docker.pid", d.Folder)); err != nil {
-		return err
-	}
-
-	return nil
+	return os.Remove(fmt.Sprintf("%s/docker.pid", d.Folder))
 }
 
 // Pid returns the pid of the daemon
@@ -457,11 +451,9 @@ out2:
 		return err
 	}
 
-	if err := os.Remove(fmt.Sprintf("%s/docker.pid", d.Folder)); err != nil {
-		return err
-	}
+	d.cmd.Wait()
 
-	return nil
+	return os.Remove(fmt.Sprintf("%s/docker.pid", d.Folder))
 }
 
 // Restart will restart the daemon by first stopping it and the starting it.
@@ -495,20 +487,20 @@ func (d *Daemon) handleUserns() {
 // LoadBusybox image into the daemon
 func (d *Daemon) LoadBusybox(t testingT) {
 	clientHost, err := client.NewEnvClient()
-	require.NoError(t, err, "failed to create client")
+	assert.NilError(t, err, "failed to create client")
 	defer clientHost.Close()
 
 	ctx := context.Background()
 	reader, err := clientHost.ImageSave(ctx, []string{"busybox:latest"})
-	require.NoError(t, err, "failed to download busybox")
+	assert.NilError(t, err, "failed to download busybox")
 	defer reader.Close()
 
 	client, err := d.NewClient()
-	require.NoError(t, err, "failed to create client")
+	assert.NilError(t, err, "failed to create client")
 	defer client.Close()
 
 	resp, err := client.ImageLoad(ctx, reader, true)
-	require.NoError(t, err, "failed to load busybox")
+	assert.NilError(t, err, "failed to load busybox")
 	defer resp.Body.Close()
 }
 
@@ -571,11 +563,11 @@ func (d *Daemon) WaitRun(contID string) error {
 }
 
 // Info returns the info struct for this daemon
-func (d *Daemon) Info(t require.TestingT) types.Info {
-	apiclient, err := request.NewClientForHost(d.Sock())
-	require.NoError(t, err)
+func (d *Daemon) Info(t assert.TestingT) types.Info {
+	apiclient, err := client.NewClientWithOpts(client.WithHost((d.Sock())))
+	assert.NilError(t, err)
 	info, err := apiclient.Info(context.Background())
-	require.NoError(t, err)
+	assert.NilError(t, err)
 	return info
 }
 
@@ -600,28 +592,6 @@ func (d *Daemon) PrependHostArg(args []string) []string {
 		}
 	}
 	return append([]string{"--host", d.Sock()}, args...)
-}
-
-// SockRequest executes a socket request on a daemon and returns statuscode and output.
-func (d *Daemon) SockRequest(method, endpoint string, data interface{}) (int, []byte, error) {
-	jsonData := bytes.NewBuffer(nil)
-	if err := json.NewEncoder(jsonData).Encode(data); err != nil {
-		return -1, nil, err
-	}
-
-	res, body, err := d.SockRequestRaw(method, endpoint, jsonData, "application/json")
-	if err != nil {
-		return -1, nil, err
-	}
-	b, err := request.ReadBody(body)
-	return res.StatusCode, b, err
-}
-
-// SockRequestRaw executes a socket request on a daemon and returns an http
-// response and a reader for the output data.
-// Deprecated: use request package instead
-func (d *Daemon) SockRequestRaw(method, endpoint string, data io.Reader, ct string) (*http.Response, io.ReadCloser, error) {
-	return request.SockRequestRaw(method, endpoint, data, ct, d.Sock())
 }
 
 // LogFileName returns the path the daemon's log file
@@ -752,12 +722,9 @@ func (d *Daemon) ReloadConfig() error {
 
 // NewClient creates new client based on daemon's socket path
 func (d *Daemon) NewClient() (*client.Client, error) {
-	httpClient, err := request.NewHTTPClient(d.Sock())
-	if err != nil {
-		return nil, err
-	}
-
-	return client.NewClient(d.Sock(), api.DefaultVersion, httpClient, nil)
+	return client.NewClientWithOpts(
+		client.FromEnv,
+		client.WithHost(d.Sock()))
 }
 
 // WaitInspectWithArgs waits for the specified expression to be equals to the specified expected string in the given time.

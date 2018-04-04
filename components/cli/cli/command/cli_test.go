@@ -1,25 +1,29 @@
 package command
 
 import (
+	"crypto/x509"
 	"os"
+	"runtime"
 	"testing"
 
-	"crypto/x509"
-
+	cliconfig "github.com/docker/cli/cli/config"
 	"github.com/docker/cli/cli/config/configfile"
 	"github.com/docker/cli/cli/flags"
-	"github.com/docker/cli/internal/test/testutil"
 	"github.com/docker/docker/api"
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/client"
+	"github.com/gotestyourself/gotestyourself/assert"
+	is "github.com/gotestyourself/gotestyourself/assert/cmp"
+	"github.com/gotestyourself/gotestyourself/fs"
 	"github.com/pkg/errors"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 	"golang.org/x/net/context"
 )
 
 func TestNewAPIClientFromFlags(t *testing.T) {
 	host := "unix://path"
+	if runtime.GOOS == "windows" {
+		host = "npipe://./"
+	}
 	opts := &flags.CommonOptions{Hosts: []string{host}}
 	configFile := &configfile.ConfigFile{
 		HTTPHeaders: map[string]string{
@@ -27,15 +31,15 @@ func TestNewAPIClientFromFlags(t *testing.T) {
 		},
 	}
 	apiclient, err := NewAPIClientFromFlags(opts, configFile)
-	require.NoError(t, err)
-	assert.Equal(t, host, apiclient.DaemonHost())
+	assert.NilError(t, err)
+	assert.Check(t, is.Equal(host, apiclient.DaemonHost()))
 
 	expectedHeaders := map[string]string{
 		"My-Header":  "Custom-Value",
 		"User-Agent": UserAgent(),
 	}
-	assert.Equal(t, expectedHeaders, apiclient.(*client.Client).CustomHTTPHeaders())
-	assert.Equal(t, api.DefaultVersion, apiclient.ClientVersion())
+	assert.Check(t, is.DeepEqual(expectedHeaders, apiclient.(*client.Client).CustomHTTPHeaders()))
+	assert.Check(t, is.Equal(api.DefaultVersion, apiclient.ClientVersion()))
 }
 
 func TestNewAPIClientFromFlagsWithAPIVersionFromEnv(t *testing.T) {
@@ -45,20 +49,20 @@ func TestNewAPIClientFromFlagsWithAPIVersionFromEnv(t *testing.T) {
 	opts := &flags.CommonOptions{}
 	configFile := &configfile.ConfigFile{}
 	apiclient, err := NewAPIClientFromFlags(opts, configFile)
-	require.NoError(t, err)
-	assert.Equal(t, customVersion, apiclient.ClientVersion())
+	assert.NilError(t, err)
+	assert.Check(t, is.Equal(customVersion, apiclient.ClientVersion()))
 }
 
 // TODO: use gotestyourself/env.Patch
 func patchEnvVariable(t *testing.T, key, value string) func() {
 	oldValue, ok := os.LookupEnv(key)
-	require.NoError(t, os.Setenv(key, value))
+	assert.NilError(t, os.Setenv(key, value))
 	return func() {
 		if !ok {
-			require.NoError(t, os.Unsetenv(key))
+			assert.NilError(t, os.Unsetenv(key))
 			return
 		}
-		require.NoError(t, os.Setenv(key, oldValue))
+		assert.NilError(t, os.Setenv(key, oldValue))
 	}
 }
 
@@ -124,9 +128,151 @@ func TestInitializeFromClient(t *testing.T) {
 
 			cli := &DockerCli{client: apiclient}
 			cli.initializeFromClient()
-			assert.Equal(t, defaultVersion, cli.defaultVersion)
-			assert.Equal(t, testcase.expectedServer, cli.server)
-			assert.Equal(t, testcase.negotiated, apiclient.negotiated)
+			assert.Check(t, is.DeepEqual(testcase.expectedServer, cli.serverInfo))
+			assert.Check(t, is.Equal(testcase.negotiated, apiclient.negotiated))
+		})
+	}
+}
+
+func TestExperimentalCLI(t *testing.T) {
+	defaultVersion := "v1.55"
+
+	var testcases = []struct {
+		doc                     string
+		configfile              string
+		expectedExperimentalCLI bool
+	}{
+		{
+			doc:                     "default",
+			configfile:              `{}`,
+			expectedExperimentalCLI: false,
+		},
+		{
+			doc: "experimental",
+			configfile: `{
+	"experimental": "enabled"
+}`,
+			expectedExperimentalCLI: true,
+		},
+	}
+
+	for _, testcase := range testcases {
+		t.Run(testcase.doc, func(t *testing.T) {
+			dir := fs.NewDir(t, testcase.doc, fs.WithFile("config.json", testcase.configfile))
+			defer dir.Remove()
+			apiclient := &fakeClient{
+				version: defaultVersion,
+			}
+
+			cli := &DockerCli{client: apiclient, err: os.Stderr}
+			cliconfig.SetDir(dir.Path())
+			err := cli.Initialize(flags.NewClientOptions())
+			assert.NilError(t, err)
+			assert.Check(t, is.Equal(testcase.expectedExperimentalCLI, cli.ClientInfo().HasExperimental))
+		})
+	}
+}
+
+func TestOrchestratorSwitch(t *testing.T) {
+	defaultVersion := "v0.00"
+
+	var testcases = []struct {
+		doc                  string
+		configfile           string
+		envOrchestrator      string
+		flagOrchestrator     string
+		expectedOrchestrator string
+		expectedKubernetes   bool
+	}{
+		{
+			doc: "default",
+			configfile: `{
+				"experimental": "enabled"
+			}`,
+			expectedOrchestrator: "swarm",
+			expectedKubernetes:   false,
+		},
+		{
+			doc: "kubernetesIsExperimental",
+			configfile: `{
+				"experimental": "disabled",
+				"orchestrator": "kubernetes"
+			}`,
+			envOrchestrator:      "kubernetes",
+			flagOrchestrator:     "kubernetes",
+			expectedOrchestrator: "swarm",
+			expectedKubernetes:   false,
+		},
+		{
+			doc: "kubernetesConfigFile",
+			configfile: `{
+				"experimental": "enabled",
+				"orchestrator": "kubernetes"
+			}`,
+			expectedOrchestrator: "kubernetes",
+			expectedKubernetes:   true,
+		},
+		{
+			doc: "kubernetesEnv",
+			configfile: `{
+				"experimental": "enabled"
+			}`,
+			envOrchestrator:      "kubernetes",
+			expectedOrchestrator: "kubernetes",
+			expectedKubernetes:   true,
+		},
+		{
+			doc: "kubernetesFlag",
+			configfile: `{
+				"experimental": "enabled"
+			}`,
+			flagOrchestrator:     "kubernetes",
+			expectedOrchestrator: "kubernetes",
+			expectedKubernetes:   true,
+		},
+		{
+			doc: "envOverridesConfigFile",
+			configfile: `{
+				"experimental": "enabled",
+				"orchestrator": "kubernetes"
+			}`,
+			envOrchestrator:      "swarm",
+			expectedOrchestrator: "swarm",
+			expectedKubernetes:   false,
+		},
+		{
+			doc: "flagOverridesEnv",
+			configfile: `{
+				"experimental": "enabled"
+			}`,
+			envOrchestrator:      "kubernetes",
+			flagOrchestrator:     "swarm",
+			expectedOrchestrator: "swarm",
+			expectedKubernetes:   false,
+		},
+	}
+
+	for _, testcase := range testcases {
+		t.Run(testcase.doc, func(t *testing.T) {
+			dir := fs.NewDir(t, testcase.doc, fs.WithFile("config.json", testcase.configfile))
+			defer dir.Remove()
+			apiclient := &fakeClient{
+				version: defaultVersion,
+			}
+			if testcase.envOrchestrator != "" {
+				defer patchEnvVariable(t, "DOCKER_ORCHESTRATOR", testcase.envOrchestrator)()
+			}
+
+			cli := &DockerCli{client: apiclient, err: os.Stderr}
+			cliconfig.SetDir(dir.Path())
+			options := flags.NewClientOptions()
+			if testcase.flagOrchestrator != "" {
+				options.Common.Orchestrator = testcase.flagOrchestrator
+			}
+			err := cli.Initialize(options)
+			assert.NilError(t, err)
+			assert.Check(t, is.Equal(testcase.expectedKubernetes, cli.ClientInfo().HasKubernetes()))
+			assert.Check(t, is.Equal(testcase.expectedOrchestrator, string(cli.ClientInfo().Orchestrator)))
 		})
 	}
 }
@@ -188,11 +334,11 @@ func TestGetClientWithPassword(t *testing.T) {
 
 			_, err := getClientWithPassword(passRetriever, newClient)
 			if testcase.expectedErr != "" {
-				testutil.ErrorContains(t, err, testcase.expectedErr)
+				assert.ErrorContains(t, err, testcase.expectedErr)
 				return
 			}
 
-			assert.NoError(t, err)
+			assert.NilError(t, err)
 		})
 	}
 }

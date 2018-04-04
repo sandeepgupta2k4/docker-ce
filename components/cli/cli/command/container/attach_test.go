@@ -1,16 +1,16 @@
 package container
 
 import (
+	"fmt"
 	"io/ioutil"
 	"testing"
 
 	"github.com/docker/cli/cli"
 	"github.com/docker/cli/internal/test"
-	"github.com/docker/cli/internal/test/testutil"
 	"github.com/docker/docker/api/types"
+	"github.com/docker/docker/api/types/container"
+	"github.com/gotestyourself/gotestyourself/assert"
 	"github.com/pkg/errors"
-	"github.com/stretchr/testify/assert"
-	"golang.org/x/net/context"
 )
 
 func TestNewAttachCommandErrors(t *testing.T) {
@@ -73,45 +73,57 @@ func TestNewAttachCommandErrors(t *testing.T) {
 		cmd := NewAttachCommand(test.NewFakeCli(&fakeClient{inspectFunc: tc.containerInspectFunc}))
 		cmd.SetOutput(ioutil.Discard)
 		cmd.SetArgs(tc.args)
-		testutil.ErrorContains(t, cmd.Execute(), tc.expectedError)
+		assert.ErrorContains(t, cmd.Execute(), tc.expectedError)
 	}
 }
 
 func TestGetExitStatus(t *testing.T) {
-	containerID := "the exec id"
-	expecatedErr := errors.New("unexpected error")
+	var (
+		expectedErr = fmt.Errorf("unexpected error")
+		errC        = make(chan error, 1)
+		resultC     = make(chan container.ContainerWaitOKBody, 1)
+	)
 
 	testcases := []struct {
-		inspectError  error
-		exitCode      int
+		result        *container.ContainerWaitOKBody
+		err           error
 		expectedError error
 	}{
 		{
-			inspectError: nil,
-			exitCode:     0,
+			result: &container.ContainerWaitOKBody{
+				StatusCode: 0,
+			},
 		},
 		{
-			inspectError:  expecatedErr,
-			expectedError: expecatedErr,
+			err:           expectedErr,
+			expectedError: expectedErr,
 		},
 		{
-			exitCode:      15,
+			result: &container.ContainerWaitOKBody{
+				Error: &container.ContainerWaitOKBodyError{expectedErr.Error()},
+			},
+			expectedError: expectedErr,
+		},
+		{
+			result: &container.ContainerWaitOKBody{
+				StatusCode: 15,
+			},
 			expectedError: cli.StatusError{StatusCode: 15},
 		},
 	}
 
 	for _, testcase := range testcases {
-		client := &fakeClient{
-			inspectFunc: func(id string) (types.ContainerJSON, error) {
-				assert.Equal(t, containerID, id)
-				return types.ContainerJSON{
-					ContainerJSONBase: &types.ContainerJSONBase{
-						State: &types.ContainerState{ExitCode: testcase.exitCode},
-					},
-				}, testcase.inspectError
-			},
+		if testcase.err != nil {
+			errC <- testcase.err
 		}
-		err := getExitStatus(context.Background(), client, containerID)
-		assert.Equal(t, testcase.expectedError, err)
+		if testcase.result != nil {
+			resultC <- *testcase.result
+		}
+		err := getExitStatus(errC, resultC)
+		if testcase.expectedError == nil {
+			assert.NilError(t, err)
+		} else {
+			assert.Error(t, err, testcase.expectedError.Error())
+		}
 	}
 }

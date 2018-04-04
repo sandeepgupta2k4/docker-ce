@@ -1,11 +1,10 @@
 ---
 aliases: ["/engine/misc/deprecated/"]
-title: "Deprecated Engine Features"
 description: "Deprecated Features."
 keywords: "docker, documentation, about, technology, deprecate"
 ---
 
-<!-- This file is maintained within the docker/cli Github
+<!-- This file is maintained within the docker/cli GitHub
      repository at https://github.com/docker/cli/. Make all
      pull requests against that repo. If you see this file in
      another repository, consider it read-only there, as it will
@@ -24,12 +23,15 @@ see [Feature Deprecation Policy](https://docs.docker.com/engine/#feature-depreca
 
 **Deprecated In Release: v17.05.0**
 
-**Disabled by default in release: [v17.09](https://github.com/docker/docker-ce/releases/tag/v17.09.0-ce)**
+**Disabled by default in release: [v17.10](https://github.com/docker/docker-ce/releases/tag/v17.10.0-ce)**
 
 Docker 17.05.0 added an optional `--detach=false` option to make the
 `docker service create` and `docker service update` work synchronously. This
-option will be enable by default in Docker 17.09, at which point the `--detach`
+option will be enabled by default in Docker 17.10, at which point the `--detach`
 flag can be used to use the previous (asynchronous) behavior.
+
+The default for this option will also be changed accordingly for `docker service rollback`
+and `docker service scale` in Docker 17.10.
 
 ### `-g` and `--graph` flags on `dockerd`
 
@@ -72,24 +74,28 @@ The `filter` param to filter the list of image by reference (name or name:tag) i
 ### `repository:shortid` image references
 **Deprecated In Release: [v1.13.0](https://github.com/docker/docker/releases/tag/v1.13.0)**
 
-**Target For Removal In Release: v17.12**
+**Removed In Release: v17.12**
 
-`repository:shortid` syntax for referencing images is very little used, collides with tag references can be confused with digest references.
+The `repository:shortid` syntax for referencing images is very little used,
+collides with tag references, and can be confused with digest references.
+
+Support for the `repository:shortid` notation to reference images was removed
+in Docker 17.12.
 
 ### `docker daemon` subcommand
 **Deprecated In Release: [v1.13.0](https://github.com/docker/docker/releases/tag/v1.13.0)**
 
-**Target For Removal In Release: v17.12**
+**Removed In Release: v17.12**
 
 The daemon is moved to a separate binary (`dockerd`), and should be used instead.
 
 ### Duplicate keys with conflicting values in engine labels
 **Deprecated In Release: [v1.13.0](https://github.com/docker/docker/releases/tag/v1.13.0)**
 
-**Target For Removal In Release: v17.12**
+**Removed In Release: v17.12**
 
-Duplicate keys with conflicting values have been deprecated. A warning is displayed
-in the output, and an error will be returned in the future.
+When setting duplicate keys with conflicting values, an error will be produced, and the daemon
+will fail to start.
 
 ### `MAINTAINER` in Dockerfile
 **Deprecated In Release: [v1.13.0](https://github.com/docker/docker/releases/tag/v1.13.0)**
@@ -108,11 +114,15 @@ future Engine versions. Instead of just requesting, for example, the URL
 ### Backing filesystem without `d_type` support for overlay/overlay2
 **Deprecated In Release: [v1.13.0](https://github.com/docker/docker/releases/tag/v1.13.0)**
 
-**Target For Removal In Release: v17.12**
+**Removed In Release: v17.12**
 
 The overlay and overlay2 storage driver does not work as expected if the backing
 filesystem does not support `d_type`. For example, XFS does not support `d_type`
 if it is formatted with the `ftype=0` option.
+
+Starting with Docker 17.12, new installations will not support running overlay2 on
+a backing filesystem without `d_type` support. For existing installations that upgrade
+to 17.12, a warning will be printed.
 
 Please also refer to [#27358](https://github.com/docker/docker/issues/27358) for
 further information.
@@ -290,7 +300,7 @@ of the `--changes` flag that allows to pass `Dockerfile` commands.
 
 **Disabled By Default In Release: v17.06**
 
-**Target For Removal In Release: v17.12**
+**Removed In Release: v17.12**
 
 Version 1.8.3 added a flag (`--disable-legacy-registry=false`) which prevents the
 docker daemon from `pull`, `push`, and `login` operations against v1
@@ -300,6 +310,21 @@ the v1 protocol.
 Support for the v1 protocol to the public registry was removed in 1.13. Any
 mirror configurations using v1 should be updated to use a
 [v2 registry mirror](https://docs.docker.com/registry/recipes/mirror/).
+
+Starting with Docker 17.12, support for V1 registries has been removed, and the
+`--disable-legacy-registry` flag can no longer be used, and `dockerd` will fail to
+start when set.
+
+### `--disable-legacy-registry` override daemon option
+
+**Disabled In Release: v17.12**
+
+**Target For Removal In Release: v18.03**
+
+The `--disable-legacy-registry` flag was disabled in Docker 17.12 and will print
+an error when used. For this error to be printed, the flag itself is still present,
+but hidden. The flag will be removed in Docker 18.03.
+
 
 ### Docker Content Trust ENV passphrase variables name change
 **Deprecated In Release: [v1.9.0](https://github.com/docker/docker/releases/tag/v1.9.0)**

@@ -4,7 +4,7 @@ description: "The login command description and usage"
 keywords: "registry, login, image"
 ---
 
-<!-- This file is maintained within the docker/cli Github
+<!-- This file is maintained within the docker/cli GitHub
      repository at https://github.com/docker/cli/. Make all
      pull requests against that repo. If you see this file in
      another repository, consider it read-only there, as it will
@@ -60,7 +60,7 @@ $ cat ~/my_password.txt | docker login --username foo --password-stdin
 `docker login` requires user to use `sudo` or be `root`, except when:
 
 1.  connecting to a remote daemon, such as a `docker-machine` provisioned `docker engine`.
-2.  user is added to the `docker` group.  This will impact the security of your system; the `docker` group is `root` equivalent.  See [Docker Daemon Attack Surface](https://docs.docker.com/security/security/#docker-daemon-attack-surface) for details.
+2.  user is added to the `docker` group.  This will impact the security of your system; the `docker` group is `root` equivalent.  See [Docker Daemon Attack Surface](https://docs.docker.com/engine/security/security/#docker-daemon-attack-surface) for details.
 
 You can log into any public or private repository for which you have
 credentials.  When you log in, the command stores credentials in

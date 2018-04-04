@@ -7,9 +7,9 @@ import (
 	"testing"
 
 	registrytypes "github.com/docker/docker/api/types/registry"
-	"github.com/docker/docker/pkg/stringutils"
+	"github.com/gotestyourself/gotestyourself/assert"
+	is "github.com/gotestyourself/gotestyourself/assert/cmp"
 	"github.com/gotestyourself/gotestyourself/golden"
-	"github.com/stretchr/testify/assert"
 )
 
 func TestSearchContext(t *testing.T) {
@@ -79,7 +79,7 @@ func TestSearchContextDescription(t *testing.T) {
 		{searchContext{
 			s:     registrytypes.SearchResult{Description: longDescription},
 			trunc: true,
-		}, stringutils.Ellipsis(longDescription, 45), ctx.Description},
+		}, Ellipsis(longDescription, 45), ctx.Description},
 		{searchContext{
 			s:     registrytypes.SearchResult{Description: descriptionWReturns},
 			trunc: false,
@@ -87,7 +87,7 @@ func TestSearchContextDescription(t *testing.T) {
 		{searchContext{
 			s:     registrytypes.SearchResult{Description: descriptionWReturns},
 			trunc: true,
-		}, stringutils.Ellipsis(longDescription, 45), ctx.Description},
+		}, Ellipsis(longDescription, 45), ctx.Description},
 	}
 
 	for _, c := range cases {
@@ -155,9 +155,9 @@ result2 5
 		testcase.context.Output = out
 		err := SearchWrite(testcase.context, results, false, 0)
 		if err != nil {
-			assert.Error(t, err, testcase.expected)
+			assert.Check(t, is.ErrorContains(err, testcase.expected))
 		} else {
-			assert.Equal(t, out.String(), testcase.expected)
+			assert.Check(t, is.Equal(out.String(), testcase.expected))
 		}
 	}
 }
@@ -192,9 +192,9 @@ result2
 		testcase.context.Output = out
 		err := SearchWrite(testcase.context, results, true, 0)
 		if err != nil {
-			assert.Error(t, err, testcase.expected)
+			assert.Check(t, is.ErrorContains(err, testcase.expected))
 		} else {
-			assert.Equal(t, out.String(), testcase.expected)
+			assert.Check(t, is.Equal(out.String(), testcase.expected))
 		}
 	}
 }
@@ -227,9 +227,9 @@ result1
 		testcase.context.Output = out
 		err := SearchWrite(testcase.context, results, false, 6)
 		if err != nil {
-			assert.Error(t, err, testcase.expected)
+			assert.Check(t, is.ErrorContains(err, testcase.expected))
 		} else {
-			assert.Equal(t, out.String(), testcase.expected)
+			assert.Check(t, is.Equal(out.String(), testcase.expected))
 		}
 	}
 }
@@ -255,7 +255,7 @@ func TestSearchContextWriteJSON(t *testing.T) {
 		if err := json.Unmarshal([]byte(line), &m); err != nil {
 			t.Fatal(err)
 		}
-		assert.Equal(t, m, expectedJSONs[i])
+		assert.Check(t, is.DeepEqual(m, expectedJSONs[i]))
 	}
 }
 
@@ -275,6 +275,6 @@ func TestSearchContextWriteJSONField(t *testing.T) {
 		if err := json.Unmarshal([]byte(line), &s); err != nil {
 			t.Fatal(err)
 		}
-		assert.Equal(t, s, results[i].Name)
+		assert.Check(t, is.Equal(s, results[i].Name))
 	}
 }

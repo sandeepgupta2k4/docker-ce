@@ -4,7 +4,7 @@ description: "The run command description and usage"
 keywords: "run, command, container"
 ---
 
-<!-- This file is maintained within the docker/cli Github
+<!-- This file is maintained within the docker/cli GitHub
      repository at https://github.com/docker/cli/. Make all
      pull requests against that repo. If you see this file in
      another repository, consider it read-only there, as it will
@@ -240,7 +240,7 @@ For the `devicemapper`, `btrfs`, `windowsfilter` and `zfs` graph drivers,
 user cannot pass a size less than the Default BaseFS Size.
 For the `overlay2` storage driver, the size option is only available if the
 backing fs is `xfs` and mounted with the `pquota` mount option.
-Under these conditions, user can pass any size less then the backing fs size.
+Under these conditions, user can pass any size less than the backing fs size.
 
 ### Mount tmpfs (--tmpfs)
 
@@ -343,12 +343,12 @@ $ docker run -t -i --mount type=bind,src=/data,dst=/data busybox sh
 ### Publish or expose port (-p, --expose)
 
 ```bash
-$ docker run -p 127.0.0.1:80:8080 ubuntu bash
+$ docker run -p 127.0.0.1:80:8080/tcp ubuntu bash
 ```
 
-This binds port `8080` of the container to port `80` on `127.0.0.1` of the host
-machine. The [Docker User
-Guide](https://docs.docker.com/engine/userguide/networking/default_network/dockerlinks/)
+This binds port `8080` of the container to TCP port `80` on `127.0.0.1` of the host
+machine. You can also specify `udp` and `sctp` ports.
+The [Docker User Guide](https://docs.docker.com/engine/userguide/networking/default_network/dockerlinks/)
 explains in detail how to manipulate ports in Docker.
 
 ```bash
@@ -588,11 +588,12 @@ Use Docker's `--restart` to specify a container's *restart policy*. A restart
 policy controls whether the Docker daemon restarts a container after exit.
 Docker supports the following restart policies:
 
-| Policy    | Result                                                                                                                                                                                                                                                           |
-|:----------|:-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `no`      | Do not automatically restart the container when it exits. This is the default.                                                                                                                                                                                   |
-| `failure` | Restart only if the container exits with a non-zero exit status. Optionally, limit the number of restart retries the Docker daemon attempts.                                                                                                                     |
-| `always`  | Always restart the container regardless of the exit status. When you specify always, the Docker daemon will try to restart the container indefinitely. The container will also always start on daemon startup, regardless of the current state of the container. |
+| Policy                     | Result                                                                                                                                                                                                                                                           |
+|:---------------------------|:-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `no`                       | Do not automatically restart the container when it exits. This is the default.                                                                                                                                                                                   |
+| `on-failure[:max-retries]` | Restart only if the container exits with a non-zero exit status. Optionally, limit the number of restart retries the Docker daemon attempts.                                                                                                                     |
+| `unless-stopped`           | Restart the container unless it is explicitly stopped or Docker itself is stopped or restarted.                                                                                                                                                                  |
+| `always`                   | Always restart the container regardless of the exit status. When you specify always, the Docker daemon will try to restart the container indefinitely. The container will also always start on daemon startup, regardless of the current state of the container. |
 
 ```bash
 $ docker run --restart=always redis
@@ -602,7 +603,7 @@ This will run the `redis` container with a restart policy of **always**
 so that if the container exits, Docker will restart it.
 
 More detailed information on restart policies can be found in the
-[Restart Policies (--restart)](../run.md#restart-policies-restart)
+[Restart Policies (--restart)](../run.md#restart-policies---restart)
 section of the Docker run reference page.
 
 ### Add entries to container hosts file (--add-host)

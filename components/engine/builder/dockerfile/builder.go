@@ -1,11 +1,10 @@
-package dockerfile
+package dockerfile // import "github.com/docker/docker/builder/dockerfile"
 
 import (
 	"bytes"
 	"fmt"
 	"io"
 	"io/ioutil"
-	"runtime"
 	"strings"
 	"time"
 
@@ -15,8 +14,10 @@ import (
 	"github.com/docker/docker/builder"
 	"github.com/docker/docker/builder/dockerfile/instructions"
 	"github.com/docker/docker/builder/dockerfile/parser"
+	"github.com/docker/docker/builder/dockerfile/shell"
 	"github.com/docker/docker/builder/fscache"
 	"github.com/docker/docker/builder/remotecontext"
+	"github.com/docker/docker/errdefs"
 	"github.com/docker/docker/pkg/idtools"
 	"github.com/docker/docker/pkg/streamformatter"
 	"github.com/docker/docker/pkg/stringid"
@@ -93,15 +94,6 @@ func (bm *BuildManager) Build(ctx context.Context, config backend.BuildConfig) (
 		}
 	}()
 
-	// TODO @jhowardmsft LCOW support - this will require rework to allow both linux and Windows simultaneously.
-	// This is an interim solution to hardcode to linux if LCOW is turned on.
-	if dockerfile.Platform == "" {
-		dockerfile.Platform = runtime.GOOS
-		if dockerfile.Platform == "windows" && system.LCOWSupported() {
-			dockerfile.Platform = "linux"
-		}
-	}
-
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
@@ -111,15 +103,20 @@ func (bm *BuildManager) Build(ctx context.Context, config backend.BuildConfig) (
 		source = src
 	}
 
+	os := ""
+	apiPlatform := system.ParsePlatform(config.Options.Platform)
+	if apiPlatform.OS != "" {
+		os = apiPlatform.OS
+	}
+	config.Options.Platform = os
+
 	builderOptions := builderOptions{
 		Options:        config.Options,
 		ProgressWriter: config.ProgressWriter,
 		Backend:        bm.backend,
 		PathCache:      bm.pathCache,
 		IDMappings:     bm.idMappings,
-		Platform:       dockerfile.Platform,
 	}
-
 	return newBuilder(ctx, builderOptions).build(source, dockerfile)
 }
 
@@ -129,10 +126,10 @@ func (bm *BuildManager) initializeClientSession(ctx context.Context, cancel func
 	}
 	logrus.Debug("client is session enabled")
 
-	ctx, cancelCtx := context.WithTimeout(ctx, sessionConnectTimeout)
+	connectCtx, cancelCtx := context.WithTimeout(ctx, sessionConnectTimeout)
 	defer cancelCtx()
 
-	c, err := bm.sg.Get(ctx, options.SessionID)
+	c, err := bm.sg.Get(connectCtx, options.SessionID)
 	if err != nil {
 		return nil, err
 	}
@@ -163,7 +160,6 @@ type builderOptions struct {
 	ProgressWriter backend.ProgressWriter
 	PathCache      pathCache
 	IDMappings     *idtools.IDMappings
-	Platform       string
 }
 
 // Builder is a Dockerfile builder
@@ -185,30 +181,13 @@ type Builder struct {
 	pathCache        pathCache
 	containerManager *containerManager
 	imageProber      ImageProber
-
-	// TODO @jhowardmft LCOW Support. This will be moved to options at a later
-	// stage, however that cannot be done now as it affects the public API
-	// if it were.
-	platform string
 }
 
 // newBuilder creates a new Dockerfile builder from an optional dockerfile and a Options.
-// TODO @jhowardmsft LCOW support: Eventually platform can be moved into the builder
-// options, however, that would be an API change as it shares types.ImageBuildOptions.
 func newBuilder(clientCtx context.Context, options builderOptions) *Builder {
 	config := options.Options
 	if config == nil {
 		config = new(types.ImageBuildOptions)
-	}
-
-	// @jhowardmsft LCOW Support. For the time being, this is interim. Eventually
-	// will be moved to types.ImageBuildOptions, but it can't for now as that would
-	// be an API change.
-	if options.Platform == "" {
-		options.Platform = runtime.GOOS
-	}
-	if options.Platform == "windows" && system.LCOWSupported() {
-		options.Platform = "linux"
 	}
 
 	b := &Builder{
@@ -222,9 +201,8 @@ func newBuilder(clientCtx context.Context, options builderOptions) *Builder {
 		idMappings:       options.IDMappings,
 		imageSources:     newImageSources(clientCtx, options),
 		pathCache:        options.PathCache,
-		imageProber:      newImageProber(options.Backend, config.CacheFrom, options.Platform, config.NoCache),
+		imageProber:      newImageProber(options.Backend, config.CacheFrom, config.NoCache),
 		containerManager: newContainerManager(options.Backend),
-		platform:         options.Platform,
 	}
 
 	return b
@@ -242,7 +220,7 @@ func (b *Builder) build(source builder.Source, dockerfile *parser.Result) (*buil
 		if instructions.IsUnknownInstruction(err) {
 			buildsFailed.WithValues(metricsUnknownInstructionError).Inc()
 		}
-		return nil, validationError{err}
+		return nil, errdefs.InvalidParameter(err)
 	}
 	if b.options.Target != "" {
 		targetIx, found := instructions.HasStage(stages, b.options.Target)
@@ -272,8 +250,8 @@ func emitImageID(aux *streamformatter.AuxFormatter, state *dispatchState) error 
 	return aux.Emit(types.BuildResult{ID: state.imageID})
 }
 
-func processMetaArg(meta instructions.ArgCommand, shlex *ShellLex, args *buildArgs) error {
-	// ShellLex currently only support the concatenated string format
+func processMetaArg(meta instructions.ArgCommand, shlex *shell.Lex, args *buildArgs) error {
+	// shell.Lex currently only support the concatenated string format
 	envs := convertMapToEnvList(args.GetAllAllowed())
 	if err := meta.Expand(func(word string) (string, error) {
 		return shlex.ProcessWord(word, envs)
@@ -299,7 +277,7 @@ func (b *Builder) dispatchDockerfileWithCancellation(parseResult []instructions.
 	for _, stage := range parseResult {
 		totalCommands += len(stage.Commands)
 	}
-	shlex := NewShellLex(escapeToken)
+	shlex := shell.NewLex(escapeToken)
 	for _, meta := range metaArgs {
 		currentCommandIndex = printCommand(b.Stdout, currentCommandIndex, totalCommands, &meta)
 
@@ -339,7 +317,6 @@ func (b *Builder) dispatchDockerfileWithCancellation(parseResult []instructions.
 			if err := dispatch(dispatchRequest, cmd); err != nil {
 				return nil, err
 			}
-
 			dispatchRequest.state.updateRunConfig()
 			fmt.Fprintf(b.Stdout, " ---> %s\n", stringid.TruncateID(dispatchRequest.state.imageID))
 
@@ -351,9 +328,6 @@ func (b *Builder) dispatchDockerfileWithCancellation(parseResult []instructions.
 		if err := commitStage(dispatchRequest.state, stagesResults); err != nil {
 			return nil, err
 		}
-	}
-	if b.options.Remove {
-		b.containerManager.RemoveAll(b.Stdout)
 	}
 	buildArgs.WarnOnUnusedBuildArgs(b.Stdout)
 	return dispatchRequest.state, nil
@@ -377,35 +351,27 @@ func addNodesForLabelOption(dockerfile *parser.Node, labels map[string]string) {
 // coming from the query parameter of the same name.
 //
 // TODO: Remove?
-func BuildFromConfig(config *container.Config, changes []string) (*container.Config, error) {
+func BuildFromConfig(config *container.Config, changes []string, os string) (*container.Config, error) {
+	if !system.IsOSSupported(os) {
+		return nil, errdefs.InvalidParameter(system.ErrNotSupportedOperatingSystem)
+	}
 	if len(changes) == 0 {
 		return config, nil
+	}
+
+	dockerfile, err := parser.Parse(bytes.NewBufferString(strings.Join(changes, "\n")))
+	if err != nil {
+		return nil, errdefs.InvalidParameter(err)
 	}
 
 	b := newBuilder(context.Background(), builderOptions{
 		Options: &types.ImageBuildOptions{NoCache: true},
 	})
 
-	dockerfile, err := parser.Parse(bytes.NewBufferString(strings.Join(changes, "\n")))
-	if err != nil {
-		return nil, validationError{err}
-	}
-
-	// TODO @jhowardmsft LCOW support. For now, if LCOW enabled, switch to linux.
-	// Also explicitly set the platform. Ultimately this will be in the builder
-	// options, but we can't do that yet as it would change the API.
-	if dockerfile.Platform == "" {
-		dockerfile.Platform = runtime.GOOS
-	}
-	if dockerfile.Platform == "windows" && system.LCOWSupported() {
-		dockerfile.Platform = "linux"
-	}
-	b.platform = dockerfile.Platform
-
 	// ensure that the commands are valid
 	for _, n := range dockerfile.AST.Children {
 		if !validCommitCommands[n.Value] {
-			return nil, validationError{errors.Errorf("%s is not a valid change command", n.Value)}
+			return nil, errdefs.InvalidParameter(errors.Errorf("%s is not a valid change command", n.Value))
 		}
 	}
 
@@ -417,18 +383,20 @@ func BuildFromConfig(config *container.Config, changes []string) (*container.Con
 	for _, n := range dockerfile.AST.Children {
 		cmd, err := instructions.ParseCommand(n)
 		if err != nil {
-			return nil, validationError{err}
+			return nil, errdefs.InvalidParameter(err)
 		}
 		commands = append(commands, cmd)
 	}
 
 	dispatchRequest := newDispatchRequest(b, dockerfile.EscapeToken, nil, newBuildArgs(b.options.BuildArgs), newStagesBuildResults())
-	dispatchRequest.state.runConfig = config
+	// We make mutations to the configuration, ensure we have a copy
+	dispatchRequest.state.runConfig = copyRunConfig(config)
 	dispatchRequest.state.imageID = config.Image
+	dispatchRequest.state.operatingSystem = os
 	for _, cmd := range commands {
 		err := dispatch(dispatchRequest, cmd)
 		if err != nil {
-			return nil, validationError{err}
+			return nil, errdefs.InvalidParameter(err)
 		}
 		dispatchRequest.state.updateRunConfig()
 	}

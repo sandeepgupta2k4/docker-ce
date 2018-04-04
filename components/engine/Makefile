@@ -16,6 +16,13 @@ export DOCKER_GITCOMMIT
 # env vars passed through directly to Docker's build scripts
 # to allow things like `make KEEPBUNDLE=1 binary` easily
 # `project/PACKAGERS.md` have some limited documentation of some of these
+#
+# DOCKER_LDFLAGS can be used to pass additional parameters to -ldflags
+# option of "go build". For example, a built-in graphdriver priority list
+# can be changed during build time like this:
+#
+# make DOCKER_LDFLAGS="-X github.com/docker/docker/daemon/graphdriver.priority=overlay2,devicemapper" dynbinary
+#
 DOCKER_ENVS := \
 	-e DOCKER_CROSSPLATFORMS \
 	-e BUILD_APT_MIRROR \
@@ -31,6 +38,7 @@ DOCKER_ENVS := \
 	-e DOCKER_GITCOMMIT \
 	-e DOCKER_GRAPHDRIVER \
 	-e DOCKER_INCREMENTAL_BINARY \
+	-e DOCKER_LDFLAGS \
 	-e DOCKER_PORT \
 	-e DOCKER_REMAP_ROOT \
 	-e DOCKER_STORAGE_OPTS \
@@ -45,7 +53,8 @@ DOCKER_ENVS := \
 	-e http_proxy \
 	-e https_proxy \
 	-e no_proxy \
-	-e VERSION
+	-e VERSION \
+	-e PLATFORM
 # note: we _cannot_ add "-e DOCKER_BUILDTAGS" here because even if it's unset in the shell, that would shadow the "ENV DOCKER_BUILDTAGS" set in our Dockerfile, which is very important for our official builds
 
 # to allow `make BIND_DIR=. shell` or `make BIND_DIR= test`
@@ -57,7 +66,7 @@ DOCKER_MOUNT := $(if $(BIND_DIR),-v "$(CURDIR)/$(BIND_DIR):/go/src/github.com/do
 # This allows the test suite to be able to run without worrying about the underlying fs used by the container running the daemon (e.g. aufs-on-aufs), so long as the host running the container is running a supported fs.
 # The volume will be cleaned up when the container is removed due to `--rm`.
 # Note that `BIND_DIR` will already be set to `bundles` if `DOCKER_HOST` is not set (see above BIND_DIR line), in such case this will do nothing since `DOCKER_MOUNT` will already be set.
-DOCKER_MOUNT := $(if $(DOCKER_MOUNT),$(DOCKER_MOUNT),-v /go/src/github.com/docker/docker/bundles) -v $(CURDIR)/.git:/go/src/github.com/docker/docker/.git
+DOCKER_MOUNT := $(if $(DOCKER_MOUNT),$(DOCKER_MOUNT),-v /go/src/github.com/docker/docker/bundles) -v "$(CURDIR)/.git:/go/src/github.com/docker/docker/.git"
 
 # This allows to set the docker-dev container name
 DOCKER_CONTAINER_NAME := $(if $(CONTAINER_NAME),--name $(CONTAINER_NAME),)
@@ -150,8 +159,8 @@ run: build ## run the docker daemon in a container
 shell: build ## start a shell inside the build env
 	$(DOCKER_RUN_DOCKER) bash
 
-test: build ## run the unit, integration and docker-py tests
-	$(DOCKER_RUN_DOCKER) hack/make.sh dynbinary cross test-unit test-integration test-docker-py
+test: build test-unit ## run the unit, integration and docker-py tests
+	$(DOCKER_RUN_DOCKER) hack/make.sh dynbinary cross test-integration test-docker-py
 
 test-docker-py: build ## run the docker-py tests
 	$(DOCKER_RUN_DOCKER) hack/make.sh dynbinary test-docker-py
@@ -188,7 +197,7 @@ swagger-docs: ## preview the API documentation
 
 build-integration-cli-on-swarm: build ## build images and binary for running integration-cli on Swarm in parallel
 	@echo "Building hack/integration-cli-on-swarm (if build fails, please refer to hack/integration-cli-on-swarm/README.md)"
-	go build -o ./hack/integration-cli-on-swarm/integration-cli-on-swarm ./hack/integration-cli-on-swarm/host
+	go build -buildmode=pie -o ./hack/integration-cli-on-swarm/integration-cli-on-swarm ./hack/integration-cli-on-swarm/host
 	@echo "Building $(INTEGRATION_CLI_MASTER_IMAGE)"
 	docker build -t $(INTEGRATION_CLI_MASTER_IMAGE) hack/integration-cli-on-swarm/agent
 # For worker, we don't use `docker build` so as to enable DOCKER_INCREMENTAL_BINARY and so on
@@ -198,6 +207,6 @@ build-integration-cli-on-swarm: build ## build images and binary for running int
 # For avoiding bakings DOCKER_GRAPHDRIVER and so on to image, we cannot use $(DOCKER_ENVS) here
 	docker run -t -d --name $(tmp) -e DOCKER_GITCOMMIT -e BUILDFLAGS -e DOCKER_INCREMENTAL_BINARY --privileged $(DOCKER_MOUNT_PKGCACHE) $(DOCKER_IMAGE) top
 	docker exec $(tmp) hack/make.sh build-integration-test-binary dynbinary
-	docker exec $(tmp) go build -o /worker github.com/docker/docker/hack/integration-cli-on-swarm/agent/worker
+	docker exec $(tmp) go build -buildmode=pie -o /worker github.com/docker/docker/hack/integration-cli-on-swarm/agent/worker
 	docker commit -c 'ENTRYPOINT ["/worker"]' $(tmp) $(INTEGRATION_CLI_WORKER_IMAGE)
 	docker rm -f $(tmp)

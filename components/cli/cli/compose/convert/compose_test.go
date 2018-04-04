@@ -6,14 +6,14 @@ import (
 	composetypes "github.com/docker/cli/cli/compose/types"
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/network"
+	"github.com/gotestyourself/gotestyourself/assert"
+	is "github.com/gotestyourself/gotestyourself/assert/cmp"
 	"github.com/gotestyourself/gotestyourself/fs"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 func TestNamespaceScope(t *testing.T) {
 	scoped := Namespace{name: "foo"}.Scope("bar")
-	assert.Equal(t, "foo_bar", scoped)
+	assert.Check(t, is.Equal("foo_bar", scoped))
 }
 
 func TestAddStackLabel(t *testing.T) {
@@ -25,7 +25,7 @@ func TestAddStackLabel(t *testing.T) {
 		"something":    "labeled",
 		LabelNamespace: "foo",
 	}
-	assert.Equal(t, expected, actual)
+	assert.Check(t, is.DeepEqual(expected, actual))
 }
 
 func TestNetworks(t *testing.T) {
@@ -35,6 +35,7 @@ func TestNetworks(t *testing.T) {
 		"outside":       {},
 		"default":       {},
 		"attachablenet": {},
+		"named":         {},
 	}
 	source := networkMap{
 		"normal": composetypes.NetworkConfig{
@@ -55,23 +56,24 @@ func TestNetworks(t *testing.T) {
 			},
 		},
 		"outside": composetypes.NetworkConfig{
-			External: composetypes.External{
-				External: true,
-				Name:     "special",
-			},
+			External: composetypes.External{External: true},
+			Name:     "special",
 		},
 		"attachablenet": composetypes.NetworkConfig{
 			Driver:     "overlay",
 			Attachable: true,
 		},
+		"named": composetypes.NetworkConfig{
+			Name: "othername",
+		},
 	}
 	expected := map[string]types.NetworkCreate{
-		"default": {
+		"foo_default": {
 			Labels: map[string]string{
 				LabelNamespace: "foo",
 			},
 		},
-		"normal": {
+		"foo_normal": {
 			Driver: "overlay",
 			IPAM: &network.IPAM{
 				Driver: "driver",
@@ -89,18 +91,21 @@ func TestNetworks(t *testing.T) {
 				"something":    "labeled",
 			},
 		},
-		"attachablenet": {
+		"foo_attachablenet": {
 			Driver:     "overlay",
 			Attachable: true,
 			Labels: map[string]string{
 				LabelNamespace: "foo",
 			},
 		},
+		"othername": {
+			Labels: map[string]string{LabelNamespace: "foo"},
+		},
 	}
 
 	networks, externals := Networks(namespace, source, serviceNetworks)
-	assert.Equal(t, expected, networks)
-	assert.Equal(t, []string{"special"}, externals)
+	assert.DeepEqual(t, expected, networks)
+	assert.DeepEqual(t, []string{"special"}, externals)
 }
 
 func TestSecrets(t *testing.T) {
@@ -123,15 +128,15 @@ func TestSecrets(t *testing.T) {
 	}
 
 	specs, err := Secrets(namespace, source)
-	assert.NoError(t, err)
-	require.Len(t, specs, 1)
+	assert.NilError(t, err)
+	assert.Assert(t, is.Len(specs, 1))
 	secret := specs[0]
-	assert.Equal(t, "foo_one", secret.Name)
-	assert.Equal(t, map[string]string{
+	assert.Check(t, is.Equal("foo_one", secret.Name))
+	assert.Check(t, is.DeepEqual(map[string]string{
 		"monster":      "mash",
 		LabelNamespace: "foo",
-	}, secret.Labels)
-	assert.Equal(t, []byte(secretText), secret.Data)
+	}, secret.Labels))
+	assert.Check(t, is.DeepEqual([]byte(secretText), secret.Data))
 }
 
 func TestConfigs(t *testing.T) {
@@ -154,13 +159,13 @@ func TestConfigs(t *testing.T) {
 	}
 
 	specs, err := Configs(namespace, source)
-	assert.NoError(t, err)
-	require.Len(t, specs, 1)
+	assert.NilError(t, err)
+	assert.Assert(t, is.Len(specs, 1))
 	config := specs[0]
-	assert.Equal(t, "foo_one", config.Name)
-	assert.Equal(t, map[string]string{
+	assert.Check(t, is.Equal("foo_one", config.Name))
+	assert.Check(t, is.DeepEqual(map[string]string{
 		"monster":      "mash",
 		LabelNamespace: "foo",
-	}, config.Labels)
-	assert.Equal(t, []byte(configText), config.Data)
+	}, config.Labels))
+	assert.Check(t, is.DeepEqual([]byte(configText), config.Data))
 }

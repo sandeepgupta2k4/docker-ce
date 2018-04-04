@@ -9,10 +9,10 @@ import (
 	"github.com/docker/cli/cli/command"
 	"github.com/docker/cli/cli/command/image"
 	"github.com/docker/cli/cli/trust"
-	"github.com/docker/notary/client"
-	"github.com/docker/notary/tuf/data"
 	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
+	"github.com/theupdateframework/notary/client"
+	"github.com/theupdateframework/notary/tuf/data"
 )
 
 type revokeOptions struct {
@@ -36,7 +36,7 @@ func newRevokeCommand(dockerCli command.Cli) *cobra.Command {
 
 func revokeTrust(cli command.Cli, remote string, options revokeOptions) error {
 	ctx := context.Background()
-	imgRefAndAuth, err := trust.GetImageReferencesAndAuth(ctx, image.AuthResolver(cli), remote)
+	imgRefAndAuth, err := trust.GetImageReferencesAndAuth(ctx, nil, image.AuthResolver(cli), remote)
 	if err != nil {
 		return err
 	}

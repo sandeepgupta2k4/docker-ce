@@ -8,20 +8,24 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/docker/cli/cli"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	yaml "gopkg.in/yaml.v2"
 )
 
 type cmdOption struct {
-	Option        string
-	Shorthand     string `yaml:",omitempty"`
-	ValueType     string `yaml:"value_type,omitempty"`
-	DefaultValue  string `yaml:"default_value,omitempty"`
-	Description   string `yaml:",omitempty"`
-	Deprecated    bool
-	MinAPIVersion string `yaml:"min_api_version,omitempty"`
-	Experimental  bool
+	Option          string
+	Shorthand       string `yaml:",omitempty"`
+	ValueType       string `yaml:"value_type,omitempty"`
+	DefaultValue    string `yaml:"default_value,omitempty"`
+	Description     string `yaml:",omitempty"`
+	Deprecated      bool
+	MinAPIVersion   string `yaml:"min_api_version,omitempty"`
+	Experimental    bool
+	ExperimentalCLI bool
+	Kubernetes      bool
+	Swarm           bool
 }
 
 type cmdDoc struct {
@@ -42,6 +46,9 @@ type cmdDoc struct {
 	Deprecated       bool
 	MinAPIVersion    string `yaml:"min_api_version,omitempty"`
 	Experimental     bool
+	ExperimentalCLI  bool
+	Kubernetes       bool
+	Swarm            bool
 }
 
 // GenYamlTree creates yaml structured ref files
@@ -53,7 +60,7 @@ func GenYamlTree(cmd *cobra.Command, dir string) error {
 // GenYamlTreeCustom creates yaml structured ref files
 func GenYamlTreeCustom(cmd *cobra.Command, dir string, filePrepender func(string) string) error {
 	for _, c := range cmd.Commands() {
-		if !c.IsAvailableCommand() || c.IsHelpCommand() {
+		if !c.IsAvailableCommand() || c.IsAdditionalHelpTopicCommand() {
 			continue
 		}
 		if err := GenYamlTreeCustom(c, dir, filePrepender); err != nil {
@@ -72,10 +79,7 @@ func GenYamlTreeCustom(cmd *cobra.Command, dir string, filePrepender func(string
 	if _, err := io.WriteString(f, filePrepender(filename)); err != nil {
 		return err
 	}
-	if err := GenYamlCustom(cmd, f); err != nil {
-		return err
-	}
-	return nil
+	return GenYamlCustom(cmd, f)
 }
 
 // GenYamlCustom creates custom yaml output
@@ -92,7 +96,7 @@ func GenYamlCustom(cmd *cobra.Command, w io.Writer) error {
 	}
 
 	if cmd.Runnable() {
-		cliDoc.Usage = cmd.UseLine()
+		cliDoc.Usage = cli.UseLine(cmd)
 	}
 
 	if len(cmd.Example) > 0 {
@@ -103,11 +107,20 @@ func GenYamlCustom(cmd *cobra.Command, w io.Writer) error {
 	}
 	// Check recursively so that, e.g., `docker stack ls` returns the same output as `docker stack`
 	for curr := cmd; curr != nil; curr = curr.Parent() {
-		if v, ok := curr.Tags["version"]; ok && cliDoc.MinAPIVersion == "" {
+		if v, ok := curr.Annotations["version"]; ok && cliDoc.MinAPIVersion == "" {
 			cliDoc.MinAPIVersion = v
 		}
-		if _, ok := curr.Tags["experimental"]; ok && !cliDoc.Experimental {
+		if _, ok := curr.Annotations["experimental"]; ok && !cliDoc.Experimental {
 			cliDoc.Experimental = true
+		}
+		if _, ok := curr.Annotations["experimentalCLI"]; ok && !cliDoc.ExperimentalCLI {
+			cliDoc.ExperimentalCLI = true
+		}
+		if _, ok := curr.Annotations["kubernetes"]; ok && !cliDoc.Kubernetes {
+			cliDoc.Kubernetes = true
+		}
+		if _, ok := curr.Annotations["swarm"]; ok && !cliDoc.Swarm {
+			cliDoc.Swarm = true
 		}
 	}
 
@@ -137,7 +150,7 @@ func GenYamlCustom(cmd *cobra.Command, w io.Writer) error {
 		sort.Sort(byName(children))
 
 		for _, child := range children {
-			if !child.IsAvailableCommand() || child.IsHelpCommand() {
+			if !child.IsAvailableCommand() || child.IsAdditionalHelpTopicCommand() {
 				continue
 			}
 			currentChild := cliDoc.Name + " " + child.Name()
@@ -185,6 +198,15 @@ func genFlagResult(flags *pflag.FlagSet) []cmdOption {
 		if v, ok := flag.Annotations["version"]; ok {
 			opt.MinAPIVersion = v[0]
 		}
+		if _, ok := flag.Annotations["experimentalCLI"]; ok {
+			opt.ExperimentalCLI = true
+		}
+		if _, ok := flag.Annotations["kubernetes"]; ok {
+			opt.Kubernetes = true
+		}
+		if _, ok := flag.Annotations["swarm"]; ok {
+			opt.Swarm = true
+		}
 
 		result = append(result, opt)
 	})
@@ -207,7 +229,7 @@ func hasSeeAlso(cmd *cobra.Command) bool {
 		return true
 	}
 	for _, c := range cmd.Commands() {
-		if !c.IsAvailableCommand() || c.IsHelpCommand() {
+		if !c.IsAvailableCommand() || c.IsAdditionalHelpTopicCommand() {
 			continue
 		}
 		return true
@@ -219,13 +241,13 @@ func parseMDContent(mdString string) (description string, examples string) {
 	parsedContent := strings.Split(mdString, "\n## ")
 	for _, s := range parsedContent {
 		if strings.Index(s, "Description") == 0 {
-			description = strings.Trim(s, "Description\n")
+			description = strings.TrimSpace(strings.TrimPrefix(s, "Description"))
 		}
 		if strings.Index(s, "Examples") == 0 {
-			examples = strings.Trim(s, "Examples\n")
+			examples = strings.TrimSpace(strings.TrimPrefix(s, "Examples"))
 		}
 	}
-	return
+	return description, examples
 }
 
 type byName []*cobra.Command

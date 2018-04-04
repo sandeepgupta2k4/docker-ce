@@ -17,7 +17,7 @@
 // before and after each step, such as creating an image ID and removing temporary
 // containers and images. Note that ONBUILD creates a kinda-sorta "sub run" which
 // includes its own set of steps (usually only one of them).
-package dockerfile
+package dockerfile // import "github.com/docker/docker/builder/dockerfile"
 
 import (
 	"reflect"
@@ -28,16 +28,18 @@ import (
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/builder"
 	"github.com/docker/docker/builder/dockerfile/instructions"
+	"github.com/docker/docker/builder/dockerfile/shell"
+	"github.com/docker/docker/errdefs"
 	"github.com/docker/docker/pkg/system"
 	"github.com/docker/docker/runconfig/opts"
 	"github.com/pkg/errors"
 )
 
-func dispatch(d dispatchRequest, cmd instructions.Command) error {
+func dispatch(d dispatchRequest, cmd instructions.Command) (err error) {
 	if c, ok := cmd.(instructions.PlatformSpecific); ok {
-		err := c.CheckPlatform(d.builder.platform)
+		err := c.CheckPlatform(d.state.operatingSystem)
 		if err != nil {
-			return validationError{err}
+			return errdefs.InvalidParameter(err)
 		}
 	}
 	runConfigEnv := d.state.runConfig.Env
@@ -48,14 +50,20 @@ func dispatch(d dispatchRequest, cmd instructions.Command) error {
 			return d.shlex.ProcessWord(word, envs)
 		})
 		if err != nil {
-			return validationError{err}
+			return errdefs.InvalidParameter(err)
 		}
 	}
 
-	if d.builder.options.ForceRemove {
-		defer d.builder.containerManager.RemoveAll(d.builder.Stdout)
-	}
-
+	defer func() {
+		if d.builder.options.ForceRemove {
+			d.builder.containerManager.RemoveAll(d.builder.Stdout)
+			return
+		}
+		if d.builder.options.Remove && err == nil {
+			d.builder.containerManager.RemoveAll(d.builder.Stdout)
+			return
+		}
+	}()
 	switch c := cmd.(type) {
 	case *instructions.EnvCommand:
 		return dispatchEnv(d, c)
@@ -97,13 +105,14 @@ func dispatch(d dispatchRequest, cmd instructions.Command) error {
 
 // dispatchState is a data object which is modified by dispatchers
 type dispatchState struct {
-	runConfig  *container.Config
-	maintainer string
-	cmdSet     bool
-	imageID    string
-	baseImage  builder.Image
-	stageName  string
-	buildArgs  *buildArgs
+	runConfig       *container.Config
+	maintainer      string
+	cmdSet          bool
+	imageID         string
+	baseImage       builder.Image
+	stageName       string
+	buildArgs       *buildArgs
+	operatingSystem string
 }
 
 func newDispatchState(baseArgs *buildArgs) *dispatchState {
@@ -178,7 +187,7 @@ func commitStage(state *dispatchState, stages *stagesBuildResults) error {
 
 type dispatchRequest struct {
 	state   *dispatchState
-	shlex   *ShellLex
+	shlex   *shell.Lex
 	builder *Builder
 	source  builder.Source
 	stages  *stagesBuildResults
@@ -187,7 +196,7 @@ type dispatchRequest struct {
 func newDispatchRequest(builder *Builder, escapeToken rune, source builder.Source, buildArgs *buildArgs, stages *stagesBuildResults) dispatchRequest {
 	return dispatchRequest{
 		state:   newDispatchState(buildArgs),
-		shlex:   NewShellLex(escapeToken),
+		shlex:   shell.NewLex(escapeToken),
 		builder: builder,
 		source:  source,
 		stages:  stages,
@@ -203,12 +212,20 @@ func (s *dispatchState) hasFromImage() bool {
 	return s.imageID != "" || (s.baseImage != nil && s.baseImage.ImageID() == "")
 }
 
-func (s *dispatchState) beginStage(stageName string, image builder.Image) {
+func (s *dispatchState) beginStage(stageName string, image builder.Image) error {
 	s.stageName = stageName
 	s.imageID = image.ImageID()
+	s.operatingSystem = image.OperatingSystem()
+	if s.operatingSystem == "" { // In case it isn't set
+		s.operatingSystem = runtime.GOOS
+	}
+	if !system.IsOSSupported(s.operatingSystem) {
+		return system.ErrNotSupportedOperatingSystem
+	}
 
 	if image.RunConfig() != nil {
-		s.runConfig = copyRunConfig(image.RunConfig()) // copy avoids referencing the same instance when 2 stages have the same base
+		// copy avoids referencing the same instance when 2 stages have the same base
+		s.runConfig = copyRunConfig(image.RunConfig())
 	} else {
 		s.runConfig = &container.Config{}
 	}
@@ -216,21 +233,18 @@ func (s *dispatchState) beginStage(stageName string, image builder.Image) {
 	s.setDefaultPath()
 	s.runConfig.OpenStdin = false
 	s.runConfig.StdinOnce = false
+	return nil
 }
 
-// Add the default PATH to runConfig.ENV if one exists for the platform and there
+// Add the default PATH to runConfig.ENV if one exists for the operating system and there
 // is no PATH set. Note that Windows containers on Windows won't have one as it's set by HCS
 func (s *dispatchState) setDefaultPath() {
-	// TODO @jhowardmsft LCOW Support - This will need revisiting later
-	platform := runtime.GOOS
-	if system.LCOWSupported() {
-		platform = "linux"
-	}
-	if system.DefaultPathEnv(platform) == "" {
+	defaultPath := system.DefaultPathEnv(s.operatingSystem)
+	if defaultPath == "" {
 		return
 	}
 	envMap := opts.ConvertKVStringsToMap(s.runConfig.Env)
 	if _, ok := envMap["PATH"]; !ok {
-		s.runConfig.Env = append(s.runConfig.Env, "PATH="+system.DefaultPathEnv(platform))
+		s.runConfig.Env = append(s.runConfig.Env, "PATH="+defaultPath)
 	}
 }

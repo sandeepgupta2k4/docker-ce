@@ -10,9 +10,9 @@ import (
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/pkg/stringid"
+	"github.com/gotestyourself/gotestyourself/assert"
+	is "github.com/gotestyourself/gotestyourself/assert/cmp"
 	"github.com/gotestyourself/gotestyourself/golden"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 func TestContainerPsContext(t *testing.T) {
@@ -66,7 +66,7 @@ func TestContainerPsContext(t *testing.T) {
 					Source: "/a/path",
 				},
 			},
-		}, true, "this-is-a-lo...", ctx.Mounts},
+		}, true, "this-is-a-long…", ctx.Mounts},
 		{types.Container{
 			Mounts: []types.MountPoint{
 				{
@@ -244,9 +244,9 @@ size: 0B
 		testcase.context.Output = out
 		err := ContainerWrite(testcase.context, containers)
 		if err != nil {
-			assert.EqualError(t, err, testcase.expected)
+			assert.Error(t, err, testcase.expected)
 		} else {
-			assert.Equal(t, testcase.expected, out.String())
+			assert.Check(t, is.Equal(testcase.expected, out.String()))
 		}
 	}
 }
@@ -305,7 +305,7 @@ func TestContainerContextWriteWithNoContainers(t *testing.T) {
 
 	for _, context := range contexts {
 		ContainerWrite(context.context, containers)
-		assert.Equal(t, context.expected, out.String())
+		assert.Check(t, is.Equal(context.expected, out.String()))
 		// Clean buffer
 		out.Reset()
 	}
@@ -359,8 +359,8 @@ func TestContainerContextWriteJSON(t *testing.T) {
 		msg := fmt.Sprintf("Output: line %d: %s", i, line)
 		var m map[string]interface{}
 		err := json.Unmarshal([]byte(line), &m)
-		require.NoError(t, err, msg)
-		assert.Equal(t, expectedJSONs[i], m, msg)
+		assert.NilError(t, err, msg)
+		assert.Check(t, is.DeepEqual(expectedJSONs[i], m), msg)
 	}
 }
 
@@ -378,8 +378,8 @@ func TestContainerContextWriteJSONField(t *testing.T) {
 		msg := fmt.Sprintf("Output: line %d: %s", i, line)
 		var s string
 		err := json.Unmarshal([]byte(line), &s)
-		require.NoError(t, err, msg)
-		assert.Equal(t, containers[i].ID, s, msg)
+		assert.NilError(t, err, msg)
+		assert.Check(t, is.Equal(containers[i].ID, s), msg)
 	}
 }
 
@@ -642,14 +642,17 @@ func TestDisplayablePorts(t *testing.T) {
 					PublicPort:  1024,
 					PrivatePort: 80,
 					Type:        "udp",
+				}, {
+					PrivatePort: 12345,
+					Type:        "sctp",
 				},
 			},
-			"80/tcp, 80/udp, 1024/tcp, 1024/udp, 1.1.1.1:1024->80/tcp, 1.1.1.1:1024->80/udp, 2.1.1.1:1024->80/tcp, 2.1.1.1:1024->80/udp, 1.1.1.1:80->1024/tcp, 1.1.1.1:80->1024/udp, 2.1.1.1:80->1024/tcp, 2.1.1.1:80->1024/udp",
+			"80/tcp, 80/udp, 1024/tcp, 1024/udp, 12345/sctp, 1.1.1.1:1024->80/tcp, 1.1.1.1:1024->80/udp, 2.1.1.1:1024->80/tcp, 2.1.1.1:1024->80/udp, 1.1.1.1:80->1024/tcp, 1.1.1.1:80->1024/udp, 2.1.1.1:80->1024/tcp, 2.1.1.1:80->1024/udp",
 		},
 	}
 
 	for _, port := range cases {
 		actual := DisplayablePorts(port.ports)
-		assert.Equal(t, port.expected, actual)
+		assert.Check(t, is.Equal(port.expected, actual))
 	}
 }

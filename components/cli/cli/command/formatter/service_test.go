@@ -8,9 +8,9 @@ import (
 	"testing"
 
 	"github.com/docker/docker/api/types/swarm"
+	"github.com/gotestyourself/gotestyourself/assert"
+	is "github.com/gotestyourself/gotestyourself/assert/cmp"
 	"github.com/gotestyourself/gotestyourself/golden"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 func TestServiceContextWrite(t *testing.T) {
@@ -126,9 +126,9 @@ bar
 		testcase.context.Output = out
 		err := ServiceListWrite(testcase.context, services, info)
 		if err != nil {
-			assert.EqualError(t, err, testcase.expected)
+			assert.Error(t, err, testcase.expected)
 		} else {
-			assert.Equal(t, testcase.expected, out.String())
+			assert.Check(t, is.Equal(testcase.expected, out.String()))
 		}
 	}
 }
@@ -192,8 +192,8 @@ func TestServiceContextWriteJSON(t *testing.T) {
 		msg := fmt.Sprintf("Output: line %d: %s", i, line)
 		var m map[string]interface{}
 		err := json.Unmarshal([]byte(line), &m)
-		require.NoError(t, err, msg)
-		assert.Equal(t, expectedJSONs[i], m, msg)
+		assert.NilError(t, err, msg)
+		assert.Check(t, is.DeepEqual(expectedJSONs[i], m), msg)
 	}
 }
 func TestServiceContextWriteJSONField(t *testing.T) {
@@ -220,7 +220,140 @@ func TestServiceContextWriteJSONField(t *testing.T) {
 		msg := fmt.Sprintf("Output: line %d: %s", i, line)
 		var s string
 		err := json.Unmarshal([]byte(line), &s)
-		require.NoError(t, err, msg)
-		assert.Equal(t, services[i].Spec.Name, s, msg)
+		assert.NilError(t, err, msg)
+		assert.Check(t, is.Equal(services[i].Spec.Name, s), msg)
 	}
+}
+
+func TestServiceContext_Ports(t *testing.T) {
+	c := serviceContext{
+		service: swarm.Service{
+			Endpoint: swarm.Endpoint{
+				Ports: []swarm.PortConfig{
+					{
+						Protocol:      "tcp",
+						TargetPort:    80,
+						PublishedPort: 81,
+						PublishMode:   "ingress",
+					},
+					{
+						Protocol:      "tcp",
+						TargetPort:    80,
+						PublishedPort: 80,
+						PublishMode:   "ingress",
+					},
+					{
+						Protocol:      "tcp",
+						TargetPort:    95,
+						PublishedPort: 95,
+						PublishMode:   "ingress",
+					},
+					{
+						Protocol:      "tcp",
+						TargetPort:    90,
+						PublishedPort: 90,
+						PublishMode:   "ingress",
+					},
+					{
+						Protocol:      "tcp",
+						TargetPort:    91,
+						PublishedPort: 91,
+						PublishMode:   "ingress",
+					},
+					{
+						Protocol:      "tcp",
+						TargetPort:    92,
+						PublishedPort: 92,
+						PublishMode:   "ingress",
+					},
+					{
+						Protocol:      "tcp",
+						TargetPort:    93,
+						PublishedPort: 93,
+						PublishMode:   "ingress",
+					},
+					{
+						Protocol:      "tcp",
+						TargetPort:    94,
+						PublishedPort: 94,
+						PublishMode:   "ingress",
+					},
+					{
+						Protocol:      "udp",
+						TargetPort:    95,
+						PublishedPort: 95,
+						PublishMode:   "ingress",
+					},
+					{
+						Protocol:      "udp",
+						TargetPort:    90,
+						PublishedPort: 90,
+						PublishMode:   "ingress",
+					},
+					{
+						Protocol:      "udp",
+						TargetPort:    96,
+						PublishedPort: 96,
+						PublishMode:   "ingress",
+					},
+					{
+						Protocol:      "udp",
+						TargetPort:    91,
+						PublishedPort: 91,
+						PublishMode:   "ingress",
+					},
+					{
+						Protocol:      "udp",
+						TargetPort:    92,
+						PublishedPort: 92,
+						PublishMode:   "ingress",
+					},
+					{
+						Protocol:      "udp",
+						TargetPort:    93,
+						PublishedPort: 93,
+						PublishMode:   "ingress",
+					},
+					{
+						Protocol:      "udp",
+						TargetPort:    94,
+						PublishedPort: 94,
+						PublishMode:   "ingress",
+					},
+					{
+						Protocol:      "tcp",
+						TargetPort:    60,
+						PublishedPort: 60,
+						PublishMode:   "ingress",
+					},
+					{
+						Protocol:      "tcp",
+						TargetPort:    61,
+						PublishedPort: 61,
+						PublishMode:   "ingress",
+					},
+					{
+						Protocol:      "tcp",
+						TargetPort:    61,
+						PublishedPort: 62,
+						PublishMode:   "ingress",
+					},
+					{
+						Protocol:      "sctp",
+						TargetPort:    97,
+						PublishedPort: 97,
+						PublishMode:   "ingress",
+					},
+					{
+						Protocol:      "sctp",
+						TargetPort:    98,
+						PublishedPort: 98,
+						PublishMode:   "ingress",
+					},
+				},
+			},
+		},
+	}
+
+	assert.Check(t, is.Equal("*:97-98->97-98/sctp, *:60-61->60-61/tcp, *:62->61/tcp, *:80-81->80/tcp, *:90-95->90-95/tcp, *:90-96->90-96/udp", c.Ports()))
 }

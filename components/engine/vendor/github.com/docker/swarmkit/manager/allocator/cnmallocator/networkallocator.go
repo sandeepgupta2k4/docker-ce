@@ -15,6 +15,7 @@ import (
 	"github.com/docker/swarmkit/log"
 	"github.com/docker/swarmkit/manager/allocator/networkallocator"
 	"github.com/pkg/errors"
+	"github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
 
@@ -244,6 +245,7 @@ vipLoop:
 		}
 		for _, nAttach := range specNetworks {
 			if nAttach.Target == eAttach.NetworkID {
+				log.L.WithFields(logrus.Fields{"service_id": s.ID, "vip": eAttach.Addr}).Debug("allocate vip")
 				if err = na.allocateVIP(eAttach); err != nil {
 					return err
 				}
@@ -404,6 +406,11 @@ func (na *cnmNetworkAllocator) IsServiceAllocated(s *api.Service, flags ...func(
 	vipLoop:
 		for _, vip := range s.Endpoint.VirtualIPs {
 			if na.IsVIPOnIngressNetwork(vip) && networkallocator.IsIngressNetworkNeeded(s) {
+				// This checks the condition when ingress network is needed
+				// but allocation has not been done.
+				if _, ok := na.services[s.ID]; !ok {
+					return false
+				}
 				continue vipLoop
 			}
 			for _, net := range specNetworks {
@@ -574,6 +581,7 @@ func (na *cnmNetworkAllocator) releaseEndpoints(networks []*api.NetworkAttachmen
 
 // allocate virtual IP for a single endpoint attachment of the service.
 func (na *cnmNetworkAllocator) allocateVIP(vip *api.Endpoint_VirtualIP) error {
+	var opts map[string]string
 	localNet := na.getNetwork(vip.NetworkID)
 	if localNet == nil {
 		return errors.New("networkallocator: could not find local network state")
@@ -603,9 +611,13 @@ func (na *cnmNetworkAllocator) allocateVIP(vip *api.Endpoint_VirtualIP) error {
 			return err
 		}
 	}
+	if localNet.nw.IPAM != nil && localNet.nw.IPAM.Driver != nil {
+		// set ipam allocation method to serial
+		opts = setIPAMSerialAlloc(localNet.nw.IPAM.Driver.Options)
+	}
 
 	for _, poolID := range localNet.pools {
-		ip, _, err := ipam.RequestAddress(poolID, addr, nil)
+		ip, _, err := ipam.RequestAddress(poolID, addr, opts)
 		if err != nil && err != ipamapi.ErrNoAvailableIPs && err != ipamapi.ErrIPOutOfRange {
 			return errors.Wrap(err, "could not allocate VIP from IPAM")
 		}
@@ -657,6 +669,7 @@ func (na *cnmNetworkAllocator) deallocateVIP(vip *api.Endpoint_VirtualIP) error 
 // allocate the IP addresses for a single network attachment of the task.
 func (na *cnmNetworkAllocator) allocateNetworkIPs(nAttach *api.NetworkAttachment) error {
 	var ip *net.IPNet
+	var opts map[string]string
 
 	ipam, _, _, err := na.resolveIPAM(nAttach.Network)
 	if err != nil {
@@ -686,11 +699,16 @@ func (na *cnmNetworkAllocator) allocateNetworkIPs(nAttach *api.NetworkAttachment
 				}
 			}
 		}
+		// Set the ipam options if the network has an ipam driver.
+		if localNet.nw.IPAM != nil && localNet.nw.IPAM.Driver != nil {
+			// set ipam allocation method to serial
+			opts = setIPAMSerialAlloc(localNet.nw.IPAM.Driver.Options)
+		}
 
 		for _, poolID := range localNet.pools {
 			var err error
 
-			ip, _, err = ipam.RequestAddress(poolID, addr, nil)
+			ip, _, err = ipam.RequestAddress(poolID, addr, opts)
 			if err != nil && err != ipamapi.ErrNoAvailableIPs && err != ipamapi.ErrIPOutOfRange {
 				return errors.Wrap(err, "could not allocate IP from IPAM")
 			}
@@ -918,8 +936,16 @@ func (na *cnmNetworkAllocator) allocatePools(n *api.Network) (map[string]string,
 			}
 			gwIP.IP = ip
 		}
+		if dOptions == nil {
+			dOptions = make(map[string]string)
+		}
+		dOptions[ipamapi.RequestAddressType] = netlabel.Gateway
+		// set ipam allocation method to serial
+		dOptions = setIPAMSerialAlloc(dOptions)
+		defer delete(dOptions, ipamapi.RequestAddressType)
+
 		if ic.Gateway != "" || gwIP == nil {
-			gwIP, _, err = ipam.RequestAddress(poolID, net.ParseIP(ic.Gateway), map[string]string{ipamapi.RequestAddressType: netlabel.Gateway})
+			gwIP, _, err = ipam.RequestAddress(poolID, net.ParseIP(ic.Gateway), dOptions)
 			if err != nil {
 				// Rollback by releasing all the resources allocated so far.
 				releasePools(ipam, ipamConfigs[:i], pools)
@@ -979,4 +1005,15 @@ func IsBuiltInDriver(name string) bool {
 		}
 	}
 	return false
+}
+
+// setIPAMSerialAlloc sets the ipam allocation method to serial
+func setIPAMSerialAlloc(opts map[string]string) map[string]string {
+	if opts == nil {
+		opts = make(map[string]string)
+	}
+	if _, ok := opts[ipamapi.AllocSerialPrefix]; !ok {
+		opts[ipamapi.AllocSerialPrefix] = "true"
+	}
+	return opts
 }

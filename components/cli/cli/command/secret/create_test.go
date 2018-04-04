@@ -8,12 +8,11 @@ import (
 	"testing"
 
 	"github.com/docker/cli/internal/test"
-	"github.com/docker/cli/internal/test/testutil"
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/swarm"
-	"github.com/gotestyourself/gotestyourself/golden"
+	"github.com/gotestyourself/gotestyourself/assert"
+	is "github.com/gotestyourself/gotestyourself/assert/cmp"
 	"github.com/pkg/errors"
-	"github.com/stretchr/testify/assert"
 )
 
 const secretDataFile = "secret-create-with-name.golden"
@@ -46,21 +45,28 @@ func TestSecretCreateErrors(t *testing.T) {
 		)
 		cmd.SetArgs(tc.args)
 		cmd.SetOutput(ioutil.Discard)
-		testutil.ErrorContains(t, cmd.Execute(), tc.expectedError)
+		assert.ErrorContains(t, cmd.Execute(), tc.expectedError)
 	}
 }
 
 func TestSecretCreateWithName(t *testing.T) {
 	name := "foo"
-	var actual []byte
+	data, err := ioutil.ReadFile(filepath.Join("testdata", secretDataFile))
+	assert.NilError(t, err)
+
+	expected := swarm.SecretSpec{
+		Annotations: swarm.Annotations{
+			Name:   name,
+			Labels: make(map[string]string),
+		},
+		Data: data,
+	}
+
 	cli := test.NewFakeCli(&fakeClient{
 		secretCreateFunc: func(spec swarm.SecretSpec) (types.SecretCreateResponse, error) {
-			if spec.Name != name {
-				return types.SecretCreateResponse{}, errors.Errorf("expected name %q, got %q", name, spec.Name)
+			if !reflect.DeepEqual(spec, expected) {
+				return types.SecretCreateResponse{}, errors.Errorf("expected %+v, got %+v", expected, spec)
 			}
-
-			actual = spec.Data
-
 			return types.SecretCreateResponse{
 				ID: "ID-" + spec.Name,
 			}, nil
@@ -69,9 +75,8 @@ func TestSecretCreateWithName(t *testing.T) {
 
 	cmd := newSecretCreateCommand(cli)
 	cmd.SetArgs([]string{name, filepath.Join("testdata", secretDataFile)})
-	assert.NoError(t, cmd.Execute())
-	golden.Assert(t, string(actual), secretDataFile)
-	assert.Equal(t, "ID-"+name, strings.TrimSpace(cli.OutBuffer().String()))
+	assert.NilError(t, cmd.Execute())
+	assert.Check(t, is.Equal("ID-"+name, strings.TrimSpace(cli.OutBuffer().String())))
 }
 
 func TestSecretCreateWithDriver(t *testing.T) {
@@ -86,7 +91,7 @@ func TestSecretCreateWithDriver(t *testing.T) {
 				return types.SecretCreateResponse{}, errors.Errorf("expected name %q, got %q", name, spec.Name)
 			}
 
-			if !reflect.DeepEqual(spec.Driver.Name, expectedDriver.Name) {
+			if spec.Driver.Name != expectedDriver.Name {
 				return types.SecretCreateResponse{}, errors.Errorf("expected driver %v, got %v", expectedDriver, spec.Labels)
 			}
 
@@ -99,8 +104,37 @@ func TestSecretCreateWithDriver(t *testing.T) {
 	cmd := newSecretCreateCommand(cli)
 	cmd.SetArgs([]string{name})
 	cmd.Flags().Set("driver", expectedDriver.Name)
-	assert.NoError(t, cmd.Execute())
-	assert.Equal(t, "ID-"+name, strings.TrimSpace(cli.OutBuffer().String()))
+	assert.NilError(t, cmd.Execute())
+	assert.Check(t, is.Equal("ID-"+name, strings.TrimSpace(cli.OutBuffer().String())))
+}
+
+func TestSecretCreateWithTemplatingDriver(t *testing.T) {
+	expectedDriver := &swarm.Driver{
+		Name: "template-driver",
+	}
+	name := "foo"
+
+	cli := test.NewFakeCli(&fakeClient{
+		secretCreateFunc: func(spec swarm.SecretSpec) (types.SecretCreateResponse, error) {
+			if spec.Name != name {
+				return types.SecretCreateResponse{}, errors.Errorf("expected name %q, got %q", name, spec.Name)
+			}
+
+			if spec.Templating.Name != expectedDriver.Name {
+				return types.SecretCreateResponse{}, errors.Errorf("expected driver %v, got %v", expectedDriver, spec.Labels)
+			}
+
+			return types.SecretCreateResponse{
+				ID: "ID-" + spec.Name,
+			}, nil
+		},
+	})
+
+	cmd := newSecretCreateCommand(cli)
+	cmd.SetArgs([]string{name})
+	cmd.Flags().Set("template-driver", expectedDriver.Name)
+	assert.NilError(t, cmd.Execute())
+	assert.Check(t, is.Equal("ID-"+name, strings.TrimSpace(cli.OutBuffer().String())))
 }
 
 func TestSecretCreateWithLabels(t *testing.T) {
@@ -130,6 +164,6 @@ func TestSecretCreateWithLabels(t *testing.T) {
 	cmd.SetArgs([]string{name, filepath.Join("testdata", secretDataFile)})
 	cmd.Flags().Set("label", "lbl1=Label-foo")
 	cmd.Flags().Set("label", "lbl2=Label-bar")
-	assert.NoError(t, cmd.Execute())
-	assert.Equal(t, "ID-"+name, strings.TrimSpace(cli.OutBuffer().String()))
+	assert.NilError(t, cmd.Execute())
+	assert.Check(t, is.Equal("ID-"+name, strings.TrimSpace(cli.OutBuffer().String())))
 }

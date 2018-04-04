@@ -1,4 +1,4 @@
-version: "3.4"
+version: "3.6"
 
 services:
   foo:
@@ -10,13 +10,12 @@ services:
         foo: bar
       target: foo
       network: foo
-      cache_from: 
+      cache_from:
         - foo
         - bar
       labels: [FOO=BAR]
 
 
-    
     cap_add:
       - ALL
 
@@ -54,6 +53,13 @@ services:
         reservations:
           cpus: '0.0001'
           memory: 20M
+          generic_resources:
+            - discrete_resource_spec:
+                kind: 'gpu'
+                value: 2
+            - discrete_resource_spec:
+                kind: 'ssd'
+                value: 1
       restart_policy:
         condition: on-failure
         delay: 5s
@@ -187,7 +193,7 @@ services:
 
     ports:
       - 3000
-      - "3000-3005"
+      - "3001-3005"
       - "8000:8000"
       - "9090-9091:8080-8081"
       - "49100:22"
@@ -243,6 +249,10 @@ services:
         source: ./opt
         target: /opt
         consistency: cached
+      - type: tmpfs
+        target: /opt
+        tmpfs:
+          size: 10000
 
     working_dir: /code
 

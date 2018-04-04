@@ -1,6 +1,4 @@
-// +build !solaris
-
-package registry
+package registry // import "github.com/docker/docker/registry"
 
 import (
 	"fmt"
@@ -14,7 +12,7 @@ import (
 	"github.com/docker/distribution/registry/client/transport"
 	"github.com/docker/docker/api/types"
 	registrytypes "github.com/docker/docker/api/types/registry"
-	"github.com/stretchr/testify/assert"
+	"github.com/gotestyourself/gotestyourself/assert"
 )
 
 var (
@@ -34,7 +32,7 @@ func spawnTestRegistrySession(t *testing.T) *Session {
 	}
 	userAgent := "docker test client"
 	var tr http.RoundTripper = debugTransport{NewTransport(nil), t.Log}
-	tr = transport.NewTransport(AuthTransport(tr, authConfig, false), DockerHeaders(userAgent, nil)...)
+	tr = transport.NewTransport(AuthTransport(tr, authConfig, false), Headers(userAgent, nil)...)
 	client := HTTPClient(tr)
 	r, err := NewSession(client, authConfig, endpoint)
 	if err != nil {
@@ -759,12 +757,12 @@ func TestSearchRepositories(t *testing.T) {
 func TestTrustedLocation(t *testing.T) {
 	for _, url := range []string{"http://example.com", "https://example.com:7777", "http://docker.io", "http://test.docker.com", "https://fakedocker.com"} {
 		req, _ := http.NewRequest("GET", url, nil)
-		assert.False(t, trustedLocation(req))
+		assert.Check(t, !trustedLocation(req))
 	}
 
 	for _, url := range []string{"https://docker.io", "https://test.docker.com:80"} {
 		req, _ := http.NewRequest("GET", url, nil)
-		assert.True(t, trustedLocation(req))
+		assert.Check(t, trustedLocation(req))
 	}
 }
 

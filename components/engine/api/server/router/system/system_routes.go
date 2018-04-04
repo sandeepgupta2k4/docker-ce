@@ -1,4 +1,4 @@
-package system
+package system // import "github.com/docker/docker/api/server/router/system"
 
 import (
 	"encoding/json"
@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/docker/docker/api"
 	"github.com/docker/docker/api/server/httputils"
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/events"
@@ -65,7 +64,6 @@ func (s *systemRouter) getInfo(ctx context.Context, w http.ResponseWriter, r *ht
 
 func (s *systemRouter) getVersion(ctx context.Context, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
 	info := s.backend.SystemVersion()
-	info.APIVersion = api.DefaultVersion
 
 	return httputils.WriteJSON(w, http.StatusOK, info)
 }
@@ -75,7 +73,7 @@ func (s *systemRouter) getDiskUsage(ctx context.Context, w http.ResponseWriter, 
 	if err != nil {
 		return err
 	}
-	builderSize, err := s.builder.DiskUsage()
+	builderSize, err := s.builder.DiskUsage(ctx)
 	if err != nil {
 		return pkgerrors.Wrap(err, "error getting build cache usage")
 	}
@@ -123,7 +121,7 @@ func (s *systemRouter) getEvents(ctx context.Context, w http.ResponseWriter, r *
 
 		if !onlyPastEvents {
 			dur := until.Sub(now)
-			timeout = time.NewTimer(dur).C
+			timeout = time.After(dur)
 		}
 	}
 

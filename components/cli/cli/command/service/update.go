@@ -92,14 +92,24 @@ func newUpdateCommand(dockerCli command.Cli) *cobra.Command {
 	flags.SetAnnotation(flagDNSOptionAdd, "version", []string{"1.25"})
 	flags.Var(&options.dnsSearch, flagDNSSearchAdd, "Add or update a custom DNS search domain")
 	flags.SetAnnotation(flagDNSSearchAdd, "version", []string{"1.25"})
-	flags.Var(&options.hosts, flagHostAdd, "Add or update a custom host-to-IP mapping (host:ip)")
+	flags.Var(&options.hosts, flagHostAdd, "Add a custom host-to-IP mapping (host:ip)")
 	flags.SetAnnotation(flagHostAdd, "version", []string{"1.25"})
+
+	// Add needs parsing, Remove only needs the key
+	flags.Var(newListOptsVar(), flagGenericResourcesRemove, "Remove a Generic resource")
+	flags.SetAnnotation(flagHostAdd, "version", []string{"1.32"})
+	flags.Var(newListOptsVarWithValidator(ValidateSingleGenericResource), flagGenericResourcesAdd, "Add a Generic resource")
+	flags.SetAnnotation(flagHostAdd, "version", []string{"1.32"})
 
 	return cmd
 }
 
 func newListOptsVar() *opts.ListOpts {
 	return opts.NewListOptsRef(&[]string{}, nil)
+}
+
+func newListOptsVarWithValidator(validator opts.ValidatorFctType) *opts.ListOpts {
+	return opts.NewListOptsRef(&[]string{}, validator)
 }
 
 // nolint: gocyclo
@@ -269,6 +279,14 @@ func updateService(ctx context.Context, apiClient client.NetworkAPIClient, flags
 		}
 	}
 
+	updateIsolation := func(flag string, field *container.Isolation) error {
+		if flags.Changed(flag) {
+			val, _ := flags.GetString(flag)
+			*field = container.Isolation(val)
+		}
+		return nil
+	}
+
 	cspec := spec.TaskTemplate.ContainerSpec
 	task := &spec.TaskTemplate
 
@@ -288,6 +306,9 @@ func updateService(ctx context.Context, apiClient client.NetworkAPIClient, flags
 	updateString(flagWorkdir, &cspec.Dir)
 	updateString(flagUser, &cspec.User)
 	updateString(flagHostname, &cspec.Hostname)
+	if err := updateIsolation(flagIsolation, &cspec.Isolation); err != nil {
+		return err
+	}
 	if err := updateMounts(flags, &cspec.Mounts); err != nil {
 		return err
 	}
@@ -301,6 +322,14 @@ func updateService(ctx context.Context, apiClient client.NetworkAPIClient, flags
 		taskResources().Reservations = &swarm.Resources{}
 		updateInt64Value(flagReserveCPU, &task.Resources.Reservations.NanoCPUs)
 		updateInt64Value(flagReserveMemory, &task.Resources.Reservations.MemoryBytes)
+	}
+
+	if err := addGenericResources(flags, task); err != nil {
+		return err
+	}
+
+	if err := removeGenericResources(flags, task); err != nil {
+		return err
 	}
 
 	updateDurationOpt(flagStopGracePeriod, &cspec.StopGracePeriod)
@@ -457,6 +486,72 @@ func anyChanged(flags *pflag.FlagSet, fields ...string) bool {
 		}
 	}
 	return false
+}
+
+func addGenericResources(flags *pflag.FlagSet, spec *swarm.TaskSpec) error {
+	if !flags.Changed(flagGenericResourcesAdd) {
+		return nil
+	}
+
+	if spec.Resources == nil {
+		spec.Resources = &swarm.ResourceRequirements{}
+	}
+
+	if spec.Resources.Reservations == nil {
+		spec.Resources.Reservations = &swarm.Resources{}
+	}
+
+	values := flags.Lookup(flagGenericResourcesAdd).Value.(*opts.ListOpts).GetAll()
+	generic, err := ParseGenericResources(values)
+	if err != nil {
+		return err
+	}
+
+	m, err := buildGenericResourceMap(spec.Resources.Reservations.GenericResources)
+	if err != nil {
+		return err
+	}
+
+	for _, toAddRes := range generic {
+		m[toAddRes.DiscreteResourceSpec.Kind] = toAddRes
+	}
+
+	spec.Resources.Reservations.GenericResources = buildGenericResourceList(m)
+
+	return nil
+}
+
+func removeGenericResources(flags *pflag.FlagSet, spec *swarm.TaskSpec) error {
+	// Can only be Discrete Resources
+	if !flags.Changed(flagGenericResourcesRemove) {
+		return nil
+	}
+
+	if spec.Resources == nil {
+		spec.Resources = &swarm.ResourceRequirements{}
+	}
+
+	if spec.Resources.Reservations == nil {
+		spec.Resources.Reservations = &swarm.Resources{}
+	}
+
+	values := flags.Lookup(flagGenericResourcesRemove).Value.(*opts.ListOpts).GetAll()
+
+	m, err := buildGenericResourceMap(spec.Resources.Reservations.GenericResources)
+	if err != nil {
+		return err
+	}
+
+	for _, toRemoveRes := range values {
+		if _, ok := m[toRemoveRes]; !ok {
+			return fmt.Errorf("could not find generic-resource `%s` to remove it", toRemoveRes)
+		}
+
+		delete(m, toRemoveRes)
+	}
+
+	spec.Resources.Reservations.GenericResources = buildGenericResourceList(m)
+	return nil
 }
 
 func updatePlacementConstraints(flags *pflag.FlagSet, placement *swarm.Placement) {
@@ -868,6 +963,10 @@ func updateReplicas(flags *pflag.FlagSet, serviceMode *swarm.ServiceMode) error 
 	return nil
 }
 
+// updateHosts performs a diff between existing host entries, entries to be
+// removed, and entries to be added. Host entries preserve the order in which they
+// were added, as the specification mentions that in case multiple entries for a
+// host exist, the first entry should be used (by default).
 func updateHosts(flags *pflag.FlagSet, hosts *[]string) error {
 	// Combine existing Hosts (in swarmkit format) with the host to add (convert to swarmkit format)
 	if flags.Changed(flagHostAdd) {
@@ -901,9 +1000,6 @@ func updateHosts(flags *pflag.FlagSet, hosts *[]string) error {
 			newHosts = append(newHosts, entry)
 		}
 	}
-
-	// Sort so that result is predictable.
-	sort.Strings(newHosts)
 
 	*hosts = newHosts
 	return nil
@@ -1023,14 +1119,16 @@ func updateNetworks(ctx context.Context, apiClient client.NetworkAPIClient, flag
 
 	if flags.Changed(flagNetworkAdd) {
 		values := flags.Lookup(flagNetworkAdd).Value.(*opts.NetworkOpt)
-		networks, err := convertNetworks(ctx, apiClient, *values)
-		if err != nil {
-			return err
-		}
+		networks := convertNetworks(*values)
 		for _, network := range networks {
-			if _, exists := existingNetworks[network.Target]; exists {
+			nwID, err := resolveNetworkID(ctx, apiClient, network.Target)
+			if err != nil {
+				return err
+			}
+			if _, exists := existingNetworks[nwID]; exists {
 				return errors.Errorf("service is already attached to network %s", network.Target)
 			}
+			network.Target = nwID
 			newNetworks = append(newNetworks, network)
 			existingNetworks[network.Target] = struct{}{}
 		}

@@ -13,7 +13,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-func newUpgradeCommand(dockerCli *command.DockerCli) *cobra.Command {
+func newUpgradeCommand(dockerCli command.Cli) *cobra.Command {
 	var options pluginOptions
 	cmd := &cobra.Command{
 		Use:   "upgrade [OPTIONS] PLUGIN [REMOTE]",
@@ -26,16 +26,16 @@ func newUpgradeCommand(dockerCli *command.DockerCli) *cobra.Command {
 			}
 			return runUpgrade(dockerCli, options)
 		},
-		Tags: map[string]string{"version": "1.26"},
+		Annotations: map[string]string{"version": "1.26"},
 	}
 
 	flags := cmd.Flags()
-	loadPullFlags(&options, flags)
+	loadPullFlags(dockerCli, &options, flags)
 	flags.BoolVar(&options.skipRemoteCheck, "skip-remote-check", false, "Do not check if specified remote plugin matches existing plugin image")
 	return cmd
 }
 
-func runUpgrade(dockerCli *command.DockerCli, opts pluginOptions) error {
+func runUpgrade(dockerCli command.Cli, opts pluginOptions) error {
 	ctx := context.Background()
 	p, _, err := dockerCli.Client().PluginInspectWithRaw(ctx, opts.localName)
 	if err != nil {

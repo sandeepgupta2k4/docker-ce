@@ -1,13 +1,17 @@
 package command_test
 
 import (
+	"bytes"
+	"fmt"
 	"testing"
 
+	"github.com/gotestyourself/gotestyourself/assert"
+	is "github.com/gotestyourself/gotestyourself/assert/cmp"
 	"github.com/pkg/errors"
-	"github.com/stretchr/testify/assert"
 	"golang.org/x/net/context"
 
 	// Prevents a circular import with "github.com/docker/cli/internal/test"
+
 	. "github.com/docker/cli/cli/command"
 	"github.com/docker/cli/internal/test"
 	"github.com/docker/docker/api/types"
@@ -17,6 +21,19 @@ import (
 type fakeClient struct {
 	client.Client
 	infoFunc func() (types.Info, error)
+}
+
+var testAuthConfigs = []types.AuthConfig{
+	{
+		ServerAddress: "https://index.docker.io/v1/",
+		Username:      "u0",
+		Password:      "p0",
+	},
+	{
+		ServerAddress: "server1.io",
+		Username:      "u1",
+		Password:      "p1",
+	},
 }
 
 func (cli *fakeClient) Info(_ context.Context) (types.Info, error) {
@@ -64,12 +81,67 @@ func TestElectAuthServer(t *testing.T) {
 	for _, tc := range testCases {
 		cli := test.NewFakeCli(&fakeClient{infoFunc: tc.infoFunc})
 		server := ElectAuthServer(context.Background(), cli)
-		assert.Equal(t, tc.expectedAuthServer, server)
+		assert.Check(t, is.Equal(tc.expectedAuthServer, server))
 		actual := cli.ErrBuffer().String()
 		if tc.expectedWarning == "" {
-			assert.Empty(t, actual)
+			assert.Check(t, is.Len(actual, 0))
 		} else {
-			assert.Contains(t, actual, tc.expectedWarning)
+			assert.Check(t, is.Contains(actual, tc.expectedWarning))
+		}
+	}
+}
+
+func TestGetDefaultAuthConfig(t *testing.T) {
+	testCases := []struct {
+		checkCredStore     bool
+		inputServerAddress string
+		expectedErr        string
+		expectedAuthConfig types.AuthConfig
+	}{
+		{
+			checkCredStore:     false,
+			inputServerAddress: "",
+			expectedErr:        "",
+			expectedAuthConfig: types.AuthConfig{
+				ServerAddress: "",
+				Username:      "",
+				Password:      "",
+			},
+		},
+		{
+			checkCredStore:     true,
+			inputServerAddress: testAuthConfigs[0].ServerAddress,
+			expectedErr:        "",
+			expectedAuthConfig: testAuthConfigs[0],
+		},
+		{
+			checkCredStore:     true,
+			inputServerAddress: testAuthConfigs[1].ServerAddress,
+			expectedErr:        "",
+			expectedAuthConfig: testAuthConfigs[1],
+		},
+		{
+			checkCredStore:     true,
+			inputServerAddress: fmt.Sprintf("https://%s", testAuthConfigs[1].ServerAddress),
+			expectedErr:        "",
+			expectedAuthConfig: testAuthConfigs[1],
+		},
+	}
+	cli := test.NewFakeCli(&fakeClient{})
+	errBuf := new(bytes.Buffer)
+	cli.SetErr(errBuf)
+	for _, authconfig := range testAuthConfigs {
+		cli.ConfigFile().GetCredentialsStore(authconfig.ServerAddress).Store(authconfig)
+	}
+	for _, tc := range testCases {
+		serverAddress := tc.inputServerAddress
+		authconfig, err := GetDefaultAuthConfig(cli, tc.checkCredStore, serverAddress, serverAddress == "https://index.docker.io/v1/")
+		if tc.expectedErr != "" {
+			assert.Check(t, err != nil)
+			assert.Check(t, is.Equal(tc.expectedErr, err.Error()))
+		} else {
+			assert.NilError(t, err)
+			assert.Check(t, is.DeepEqual(tc.expectedAuthConfig, *authconfig))
 		}
 	}
 }

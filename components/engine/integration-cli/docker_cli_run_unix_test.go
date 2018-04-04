@@ -226,6 +226,7 @@ func (s *DockerSuite) TestRunAttachDetachFromInvalidFlag(c *check.C) {
 	if err := cmd.Start(); err != nil {
 		c.Fatal(err)
 	}
+	go cmd.Wait()
 
 	bufReader := bufio.NewReader(stdout)
 	out, err := bufReader.ReadString('\n')
@@ -424,6 +425,7 @@ func (s *DockerSuite) TestRunAttachInvalidDetachKeySequencePreserved(c *check.C)
 	if err := cmd.Start(); err != nil {
 		c.Fatal(err)
 	}
+	go cmd.Wait()
 	c.Assert(waitRun(name), check.IsNil)
 
 	// Invalid escape sequence aba, should print aba in output
@@ -613,7 +615,7 @@ func (s *DockerSuite) TestRunWithInvalidPathforBlkioDeviceWriteIOps(c *check.C) 
 }
 
 func (s *DockerSuite) TestRunOOMExitCode(c *check.C) {
-	testRequires(c, memoryLimitSupport, swapMemorySupport)
+	testRequires(c, memoryLimitSupport, swapMemorySupport, NotPpc64le)
 	errChan := make(chan error)
 	go func() {
 		defer close(errChan)

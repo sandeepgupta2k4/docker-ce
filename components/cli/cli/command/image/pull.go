@@ -14,8 +14,10 @@ import (
 )
 
 type pullOptions struct {
-	remote string
-	all    bool
+	remote    string
+	all       bool
+	platform  string
+	untrusted bool
 }
 
 // NewPullCommand creates a new `docker pull` command
@@ -35,36 +37,39 @@ func NewPullCommand(dockerCli command.Cli) *cobra.Command {
 	flags := cmd.Flags()
 
 	flags.BoolVarP(&opts.all, "all-tags", "a", false, "Download all tagged images in the repository")
-	command.AddTrustVerificationFlags(flags)
+
+	command.AddPlatformFlag(flags, &opts.platform)
+	command.AddTrustVerificationFlags(flags, &opts.untrusted, dockerCli.ContentTrustEnabled())
 
 	return cmd
 }
 
 func runPull(cli command.Cli, opts pullOptions) error {
-	ctx := context.Background()
-	imgRefAndAuth, err := trust.GetImageReferencesAndAuth(ctx, AuthResolver(cli), opts.remote)
-	if err != nil {
+	distributionRef, err := reference.ParseNormalizedNamed(opts.remote)
+	switch {
+	case err != nil:
 		return err
-	}
-
-	distributionRef := imgRefAndAuth.Reference()
-	if opts.all && !reference.IsNameOnly(distributionRef) {
+	case opts.all && !reference.IsNameOnly(distributionRef):
 		return errors.New("tag can't be used with --all-tags/-a")
-	}
-
-	if !opts.all && reference.IsNameOnly(distributionRef) {
+	case !opts.all && reference.IsNameOnly(distributionRef):
 		distributionRef = reference.TagNameOnly(distributionRef)
 		if tagged, ok := distributionRef.(reference.Tagged); ok {
 			fmt.Fprintf(cli.Out(), "Using default tag: %s\n", tagged.Tag())
 		}
 	}
 
+	ctx := context.Background()
+	imgRefAndAuth, err := trust.GetImageReferencesAndAuth(ctx, nil, AuthResolver(cli), distributionRef.String())
+	if err != nil {
+		return err
+	}
+
 	// Check if reference has a digest
 	_, isCanonical := distributionRef.(reference.Canonical)
-	if command.IsTrusted() && !isCanonical {
-		err = trustedPull(ctx, cli, imgRefAndAuth)
+	if !opts.untrusted && !isCanonical {
+		err = trustedPull(ctx, cli, imgRefAndAuth, opts.platform)
 	} else {
-		err = imagePullPrivileged(ctx, cli, imgRefAndAuth, opts.all)
+		err = imagePullPrivileged(ctx, cli, imgRefAndAuth, opts.all, opts.platform)
 	}
 	if err != nil {
 		if strings.Contains(err.Error(), "when fetching 'plugin'") {

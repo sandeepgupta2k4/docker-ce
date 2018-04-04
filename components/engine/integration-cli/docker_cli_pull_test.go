@@ -244,6 +244,7 @@ func (s *DockerHubPullSuite) TestPullClientDisconnect(c *check.C) {
 	c.Assert(err, checker.IsNil)
 	err = pullCmd.Start()
 	c.Assert(err, checker.IsNil)
+	go pullCmd.Wait()
 
 	// Cancel as soon as we get some output.
 	buf := make([]byte, 10)
@@ -256,18 +257,6 @@ func (s *DockerHubPullSuite) TestPullClientDisconnect(c *check.C) {
 	time.Sleep(2 * time.Second)
 	_, err = s.CmdWithError("inspect", repoName)
 	c.Assert(err, checker.NotNil, check.Commentf("image was pulled after client disconnected"))
-}
-
-func (s *DockerRegistryAuthHtpasswdSuite) TestPullNoCredentialsNotFound(c *check.C) {
-	// @TODO TestPullNoCredentialsNotFound expects docker to fall back to a v1 registry, so has to be updated for v17.12, when v1 registries are no longer supported
-	s.d.StartWithBusybox(c, "--disable-legacy-registry=false")
-
-	// we don't care about the actual image, we just want to see image not found
-	// because that means v2 call returned 401 and we fell back to v1 which usually
-	// gives a 404 (in this case the test registry doesn't handle v1 at all)
-	out, err := s.d.Cmd("pull", privateRegistryURL+"/busybox")
-	c.Assert(err, check.NotNil, check.Commentf(out))
-	c.Assert(out, checker.Contains, "Error: image busybox:latest not found")
 }
 
 // Regression test for https://github.com/docker/docker/issues/26429

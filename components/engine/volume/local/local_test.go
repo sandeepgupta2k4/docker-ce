@@ -1,4 +1,4 @@
-package local
+package local // import "github.com/docker/docker/volume/local"
 
 import (
 	"io/ioutil"
@@ -181,7 +181,7 @@ func TestValidateName(t *testing.T) {
 }
 
 func TestCreateWithOpts(t *testing.T) {
-	if runtime.GOOS == "windows" || runtime.GOOS == "solaris" {
+	if runtime.GOOS == "windows" {
 		t.Skip()
 	}
 	rootDir, err := ioutil.TempDir("", "local-volume-test")

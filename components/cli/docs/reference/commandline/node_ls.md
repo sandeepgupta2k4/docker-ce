@@ -4,7 +4,7 @@ description: "The node ls command description and usage"
 keywords: "node, list"
 ---
 
-<!-- This file is maintained within the docker/cli Github
+<!-- This file is maintained within the docker/cli GitHub
      repository at https://github.com/docker/cli/. Make all
      pull requests against that repo. If you see this file in
      another repository, consider it read-only there, as it will
@@ -146,6 +146,7 @@ Placeholder      | Description
 `.Availability`  | Node availability ("active", "pause", or "drain")
 `.ManagerStatus` | Manager status of the node
 `.TLSStatus`     | TLS status of the node ("Ready", or "Needs Rotation" has TLS certificate signed by an old CA)
+`.EngineVersion` | Engine version
 
 When using the `--format` option, the `node ls` command will either
 output the data exactly as the template declares or, when using the

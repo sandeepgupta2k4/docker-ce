@@ -8,15 +8,15 @@ import (
 	"github.com/docker/distribution/reference"
 	"github.com/docker/docker/api/types/swarm"
 	"github.com/docker/docker/registry"
-	"github.com/docker/notary/tuf/data"
 	"github.com/opencontainers/go-digest"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
+	"github.com/theupdateframework/notary/tuf/data"
 	"golang.org/x/net/context"
 )
 
 func resolveServiceImageDigestContentTrust(dockerCli command.Cli, service *swarm.ServiceSpec) error {
-	if !command.IsTrusted() {
+	if !dockerCli.ContentTrustEnabled() {
 		// When not using content trust, digest resolution happens later when
 		// contacting the registry to retrieve image information.
 		return nil

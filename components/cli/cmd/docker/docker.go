@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/docker/cli/cli"
@@ -39,10 +40,6 @@ func newDockerCommand(dockerCli *command.DockerCli) *cobra.Command {
 			return command.ShowHelp(dockerCli.Err())(cmd, args)
 		},
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
-			// daemon command is special, we redirect directly to another binary
-			if cmd.Name() == "daemon" {
-				return nil
-			}
 			// flags must be the top-level command flags, not cmd.Flags()
 			opts.Common.SetDefaultOptions(flags)
 			dockerPreRun(opts)
@@ -64,7 +61,6 @@ func newDockerCommand(dockerCli *command.DockerCli) *cobra.Command {
 	setHelpFunc(dockerCli, cmd, flags, opts)
 
 	cmd.SetOutput(dockerCli.Out())
-	cmd.AddCommand(newDaemonCommand())
 	commands.AddCommands(cmd, dockerCli)
 
 	setValidateArgs(dockerCli, cmd, flags, opts)
@@ -88,6 +84,7 @@ func setFlagErrorFunc(dockerCli *command.DockerCli, cmd *cobra.Command, flags *p
 }
 
 func setHelpFunc(dockerCli *command.DockerCli, cmd *cobra.Command, flags *pflag.FlagSet, opts *cliflags.ClientOptions) {
+	defaultHelpFunc := cmd.HelpFunc()
 	cmd.SetHelpFunc(func(ccmd *cobra.Command, args []string) {
 		initializeDockerCli(dockerCli, flags, opts)
 		if err := isSupported(ccmd, dockerCli); err != nil {
@@ -96,10 +93,7 @@ func setHelpFunc(dockerCli *command.DockerCli, cmd *cobra.Command, flags *pflag.
 		}
 
 		hideUnsupportedFeatures(ccmd, dockerCli)
-
-		if err := ccmd.Help(); err != nil {
-			ccmd.Println(err)
-		}
+		defaultHelpFunc(ccmd, args)
 	})
 }
 
@@ -162,7 +156,7 @@ func main() {
 	stdin, stdout, stderr := term.StdStreams()
 	logrus.SetOutput(stderr)
 
-	dockerCli := command.NewDockerCli(stdin, stdout, stderr)
+	dockerCli := command.NewDockerCli(stdin, stdout, stderr, contentTrustEnabled())
 	cmd := newDockerCommand(dockerCli)
 
 	if err := cmd.Execute(); err != nil {
@@ -180,6 +174,16 @@ func main() {
 		fmt.Fprintln(stderr, err)
 		os.Exit(1)
 	}
+}
+
+func contentTrustEnabled() bool {
+	if e := os.Getenv("DOCKER_CONTENT_TRUST"); e != "" {
+		if t, err := strconv.ParseBool(e); t || err != nil {
+			// treat any other value as true
+			return true
+		}
+	}
+	return false
 }
 
 func showVersion() {
@@ -200,22 +204,40 @@ func dockerPreRun(opts *cliflags.ClientOptions) {
 
 type versionDetails interface {
 	Client() client.APIClient
+	ClientInfo() command.ClientInfo
 	ServerInfo() command.ServerInfo
+}
+
+func hideFeatureFlag(f *pflag.Flag, hasFeature bool, annotation string) {
+	if hasFeature {
+		return
+	}
+	if _, ok := f.Annotations[annotation]; ok {
+		f.Hidden = true
+	}
+}
+
+func hideFeatureSubCommand(subcmd *cobra.Command, hasFeature bool, annotation string) {
+	if hasFeature {
+		return
+	}
+	if _, ok := subcmd.Annotations[annotation]; ok {
+		subcmd.Hidden = true
+	}
 }
 
 func hideUnsupportedFeatures(cmd *cobra.Command, details versionDetails) {
 	clientVersion := details.Client().ClientVersion()
 	osType := details.ServerInfo().OSType
 	hasExperimental := details.ServerInfo().HasExperimental
+	hasExperimentalCLI := details.ClientInfo().HasExperimental
+	hasKubernetes := details.ClientInfo().HasKubernetes()
 
 	cmd.Flags().VisitAll(func(f *pflag.Flag) {
-		// hide experimental flags
-		if !hasExperimental {
-			if _, ok := f.Annotations["experimental"]; ok {
-				f.Hidden = true
-			}
-		}
-
+		hideFeatureFlag(f, hasExperimental, "experimental")
+		hideFeatureFlag(f, hasExperimentalCLI, "experimentalCLI")
+		hideFeatureFlag(f, hasKubernetes, "kubernetes")
+		hideFeatureFlag(f, !hasKubernetes, "swarm")
 		// hide flags not supported by the server
 		if !isOSTypeSupported(f, osType) || !isVersionSupported(f, clientVersion) {
 			f.Hidden = true
@@ -223,34 +245,30 @@ func hideUnsupportedFeatures(cmd *cobra.Command, details versionDetails) {
 	})
 
 	for _, subcmd := range cmd.Commands() {
-		// hide experimental subcommands
-		if !hasExperimental {
-			if _, ok := subcmd.Tags["experimental"]; ok {
-				subcmd.Hidden = true
-			}
-		}
-
+		hideFeatureSubCommand(subcmd, hasExperimental, "experimental")
+		hideFeatureSubCommand(subcmd, hasExperimentalCLI, "experimentalCLI")
+		hideFeatureSubCommand(subcmd, hasKubernetes, "kubernetes")
+		hideFeatureSubCommand(subcmd, !hasKubernetes, "swarm")
 		// hide subcommands not supported by the server
-		if subcmdVersion, ok := subcmd.Tags["version"]; ok && versions.LessThan(clientVersion, subcmdVersion) {
+		if subcmdVersion, ok := subcmd.Annotations["version"]; ok && versions.LessThan(clientVersion, subcmdVersion) {
 			subcmd.Hidden = true
 		}
 	}
 }
 
 func isSupported(cmd *cobra.Command, details versionDetails) error {
+	if err := areSubcommandsSupported(cmd, details); err != nil {
+		return err
+	}
+	return areFlagsSupported(cmd, details)
+}
+
+func areFlagsSupported(cmd *cobra.Command, details versionDetails) error {
 	clientVersion := details.Client().ClientVersion()
 	osType := details.ServerInfo().OSType
 	hasExperimental := details.ServerInfo().HasExperimental
-
-	// Check recursively so that, e.g., `docker stack ls` returns the same output as `docker stack`
-	for curr := cmd; curr != nil; curr = curr.Parent() {
-		if cmdVersion, ok := curr.Tags["version"]; ok && versions.LessThan(clientVersion, cmdVersion) {
-			return fmt.Errorf("%s requires API version %s, but the Docker daemon API version is %s", cmd.CommandPath(), cmdVersion, clientVersion)
-		}
-		if _, ok := curr.Tags["experimental"]; ok && !hasExperimental {
-			return fmt.Errorf("%s is only supported on a Docker daemon with experimental features enabled", cmd.CommandPath())
-		}
-	}
+	hasKubernetes := details.ClientInfo().HasKubernetes()
+	hasExperimentalCLI := details.ClientInfo().HasExperimental
 
 	errs := []string{}
 
@@ -267,12 +285,53 @@ func isSupported(cmd *cobra.Command, details versionDetails) error {
 			if _, ok := f.Annotations["experimental"]; ok && !hasExperimental {
 				errs = append(errs, fmt.Sprintf("\"--%s\" is only supported on a Docker daemon with experimental features enabled", f.Name))
 			}
+			if _, ok := f.Annotations["experimentalCLI"]; ok && !hasExperimentalCLI {
+				errs = append(errs, fmt.Sprintf("\"--%s\" is only supported when experimental cli features are enabled", f.Name))
+			}
+			_, isKubernetesAnnotated := f.Annotations["kubernetes"]
+			_, isSwarmAnnotated := f.Annotations["swarm"]
+			if isKubernetesAnnotated && !isSwarmAnnotated && !hasKubernetes {
+				errs = append(errs, fmt.Sprintf("\"--%s\" is only supported on a Docker cli with kubernetes features enabled", f.Name))
+			}
+			if isSwarmAnnotated && !isKubernetesAnnotated && hasKubernetes {
+				errs = append(errs, fmt.Sprintf("\"--%s\" is only supported on a Docker cli with swarm features enabled", f.Name))
+			}
 		}
 	})
 	if len(errs) > 0 {
 		return errors.New(strings.Join(errs, "\n"))
 	}
+	return nil
+}
 
+// Check recursively so that, e.g., `docker stack ls` returns the same output as `docker stack`
+func areSubcommandsSupported(cmd *cobra.Command, details versionDetails) error {
+	clientVersion := details.Client().ClientVersion()
+	hasExperimental := details.ServerInfo().HasExperimental
+	hasExperimentalCLI := details.ClientInfo().HasExperimental
+	hasKubernetes := details.ClientInfo().HasKubernetes()
+
+	// Check recursively so that, e.g., `docker stack ls` returns the same output as `docker stack`
+	for curr := cmd; curr != nil; curr = curr.Parent() {
+		if cmdVersion, ok := curr.Annotations["version"]; ok && versions.LessThan(clientVersion, cmdVersion) {
+			return fmt.Errorf("%s requires API version %s, but the Docker daemon API version is %s", cmd.CommandPath(), cmdVersion, clientVersion)
+		}
+		if _, ok := curr.Annotations["experimental"]; ok && !hasExperimental {
+			return fmt.Errorf("%s is only supported on a Docker daemon with experimental features enabled", cmd.CommandPath())
+		}
+		if _, ok := curr.Annotations["experimentalCLI"]; ok && !hasExperimentalCLI {
+			return fmt.Errorf("%s is only supported when experimental cli features are enabled", cmd.CommandPath())
+		}
+		_, isKubernetesAnnotated := curr.Annotations["kubernetes"]
+		_, isSwarmAnnotated := curr.Annotations["swarm"]
+
+		if isKubernetesAnnotated && !isSwarmAnnotated && !hasKubernetes {
+			return fmt.Errorf("%s is only supported on a Docker cli with kubernetes features enabled", cmd.CommandPath())
+		}
+		if isSwarmAnnotated && !isKubernetesAnnotated && hasKubernetes {
+			return fmt.Errorf("%s is only supported on a Docker cli with swarm features enabled", cmd.CommandPath())
+		}
+	}
 	return nil
 }
 
@@ -300,7 +359,7 @@ func isOSTypeSupported(f *pflag.Flag, osType string) bool {
 // hasTags return true if any of the command's parents has tags
 func hasTags(cmd *cobra.Command) bool {
 	for curr := cmd; curr != nil; curr = curr.Parent() {
-		if len(curr.Tags) > 0 {
+		if len(curr.Annotations) > 0 {
 			return true
 		}
 	}

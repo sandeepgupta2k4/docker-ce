@@ -1,4 +1,4 @@
-package registry
+package registry // import "github.com/docker/docker/registry"
 
 import (
 	"reflect"
@@ -6,7 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
+	"github.com/gotestyourself/gotestyourself/assert"
+	is "github.com/gotestyourself/gotestyourself/assert/cmp"
 )
 
 func TestLoadAllowNondistributableArtifacts(t *testing.T) {
@@ -311,9 +312,70 @@ func TestNewServiceConfig(t *testing.T) {
 	for _, testCase := range testCases {
 		_, err := newServiceConfig(testCase.opts)
 		if testCase.errStr != "" {
-			assert.EqualError(t, err, testCase.errStr)
+			assert.Check(t, is.Error(err, testCase.errStr))
 		} else {
-			assert.Nil(t, err)
+			assert.Check(t, err)
 		}
+	}
+}
+
+func TestValidateIndexName(t *testing.T) {
+	valid := []struct {
+		index  string
+		expect string
+	}{
+		{
+			index:  "index.docker.io",
+			expect: "docker.io",
+		},
+		{
+			index:  "example.com",
+			expect: "example.com",
+		},
+		{
+			index:  "127.0.0.1:8080",
+			expect: "127.0.0.1:8080",
+		},
+		{
+			index:  "mytest-1.com",
+			expect: "mytest-1.com",
+		},
+		{
+			index:  "mirror-1.com/v1/?q=foo",
+			expect: "mirror-1.com/v1/?q=foo",
+		},
+	}
+
+	for _, testCase := range valid {
+		result, err := ValidateIndexName(testCase.index)
+		if assert.Check(t, err) {
+			assert.Check(t, is.Equal(testCase.expect, result))
+		}
+
+	}
+
+}
+
+func TestValidateIndexNameWithError(t *testing.T) {
+	invalid := []struct {
+		index string
+		err   string
+	}{
+		{
+			index: "docker.io-",
+			err:   "invalid index name (docker.io-). Cannot begin or end with a hyphen",
+		},
+		{
+			index: "-example.com",
+			err:   "invalid index name (-example.com). Cannot begin or end with a hyphen",
+		},
+		{
+			index: "mirror-1.com/v1/?q=foo-",
+			err:   "invalid index name (mirror-1.com/v1/?q=foo-). Cannot begin or end with a hyphen",
+		},
+	}
+	for _, testCase := range invalid {
+		_, err := ValidateIndexName(testCase.index)
+		assert.Check(t, is.Error(err, testCase.err))
 	}
 }

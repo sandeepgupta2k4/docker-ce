@@ -10,14 +10,16 @@ import (
 func NewTrustCommand(dockerCli command.Cli) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "trust",
-		Short: "Manage trust on Docker images (experimental)",
+		Short: "Manage trust on Docker images",
 		Args:  cli.NoArgs,
 		RunE:  command.ShowHelp(dockerCli.Err()),
 	}
 	cmd.AddCommand(
-		newViewCommand(dockerCli),
 		newRevokeCommand(dockerCli),
 		newSignCommand(dockerCli),
+		newTrustKeyCommand(dockerCli),
+		newTrustSignerCommand(dockerCli),
+		newInspectCommand(dockerCli),
 	)
 	return cmd
 }

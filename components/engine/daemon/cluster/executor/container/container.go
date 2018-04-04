@@ -1,4 +1,4 @@
-package container
+package container // import "github.com/docker/docker/daemon/cluster/executor/container"
 
 import (
 	"errors"
@@ -166,6 +166,10 @@ func (c *containerConfig) portBindings() nat.PortMap {
 	}
 
 	return portBindings
+}
+
+func (c *containerConfig) isolation() enginecontainer.Isolation {
+	return convert.IsolationFromGRPC(c.spec().Isolation)
 }
 
 func (c *containerConfig) exposedPorts() map[nat.Port]struct{} {
@@ -350,6 +354,7 @@ func (c *containerConfig) hostConfig() *enginecontainer.HostConfig {
 		PortBindings:   c.portBindings(),
 		Mounts:         c.mounts(),
 		ReadonlyRootfs: c.spec().ReadOnly,
+		Isolation:      c.isolation(),
 	}
 
 	if c.spec().DNSConfig != nil {
@@ -568,19 +573,6 @@ func (c *containerConfig) serviceConfig() *clustertypes.ServiceConfig {
 	}
 
 	return svcCfg
-}
-
-// networks returns a list of network names attached to the container. The
-// returned name can be used to lookup the corresponding network create
-// options.
-func (c *containerConfig) networks() []string {
-	var networks []string
-
-	for name := range c.networksAttachments {
-		networks = append(networks, name)
-	}
-
-	return networks
 }
 
 func (c *containerConfig) networkCreateRequest(name string) (clustertypes.NetworkCreateRequest, error) {

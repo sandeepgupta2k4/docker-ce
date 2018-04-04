@@ -1,4 +1,4 @@
-package store
+package store // import "github.com/docker/docker/volume/store"
 
 import (
 	"net"
@@ -29,7 +29,10 @@ type volumeWrapper struct {
 }
 
 func (v volumeWrapper) Options() map[string]string {
-	options := map[string]string{}
+	if v.options == nil {
+		return nil
+	}
+	options := make(map[string]string, len(v.options))
 	for key, value := range v.options {
 		options[key] = value
 	}
@@ -37,7 +40,15 @@ func (v volumeWrapper) Options() map[string]string {
 }
 
 func (v volumeWrapper) Labels() map[string]string {
-	return v.labels
+	if v.labels == nil {
+		return nil
+	}
+
+	labels := make(map[string]string, len(v.labels))
+	for key, value := range v.labels {
+		labels[key] = value
+	}
+	return labels
 }
 
 func (v volumeWrapper) Scope() string {
@@ -145,8 +156,9 @@ func (s *VolumeStore) Purge(name string) {
 	s.globalLock.Lock()
 	v, exists := s.names[name]
 	if exists {
-		if _, err := volumedrivers.RemoveDriver(v.DriverName()); err != nil {
-			logrus.Errorf("Error dereferencing volume driver: %v", err)
+		driverName := v.DriverName()
+		if _, err := volumedrivers.ReleaseDriver(driverName); err != nil {
+			logrus.WithError(err).WithField("driver", driverName).Error("Error releasing reference to volume driver")
 		}
 	}
 	if err := s.removeMeta(name); err != nil {
@@ -385,32 +397,37 @@ func (s *VolumeStore) create(name, driverName string, opts, labels map[string]st
 	}
 
 	if v != nil {
-		return v, nil
+		// there is an existing volume, if we already have this stored locally, return it.
+		// TODO: there could be some inconsistent details such as labels here
+		if vv, _ := s.getNamed(v.Name()); vv != nil {
+			return vv, nil
+		}
 	}
 
 	// Since there isn't a specified driver name, let's see if any of the existing drivers have this volume name
 	if driverName == "" {
-		v, _ := s.getVolume(name)
+		v, _ = s.getVolume(name)
 		if v != nil {
 			return v, nil
 		}
 	}
 
 	vd, err := volumedrivers.CreateDriver(driverName)
-
 	if err != nil {
 		return nil, &OpErr{Op: "create", Name: name, Err: err}
 	}
 
 	logrus.Debugf("Registering new volume reference: driver %q, name %q", vd.Name(), name)
+	if v, _ = vd.Get(name); v == nil {
+		v, err = vd.Create(name, opts)
+		if err != nil {
+			if _, err := volumedrivers.ReleaseDriver(driverName); err != nil {
+				logrus.WithError(err).WithField("driver", driverName).Error("Error releasing reference to volume driver")
+			}
+			return nil, err
+		}
+	}
 
-	if v, _ := vd.Get(name); v != nil {
-		return v, nil
-	}
-	v, err = vd.Create(name, opts)
-	if err != nil {
-		return nil, err
-	}
 	s.globalLock.Lock()
 	s.labels[name] = labels
 	s.options[name] = opts

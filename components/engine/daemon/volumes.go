@@ -1,4 +1,4 @@
-package daemon
+package daemon // import "github.com/docker/docker/daemon"
 
 import (
 	"fmt"
@@ -10,8 +10,10 @@ import (
 
 	"github.com/docker/docker/api/types"
 	containertypes "github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/mount"
 	mounttypes "github.com/docker/docker/api/types/mount"
 	"github.com/docker/docker/container"
+	"github.com/docker/docker/errdefs"
 	"github.com/docker/docker/volume"
 	"github.com/docker/docker/volume/drivers"
 	"github.com/pkg/errors"
@@ -75,7 +77,7 @@ func (m mounts) parts(i int) int {
 func (daemon *Daemon) registerMountPoints(container *container.Container, hostConfig *containertypes.HostConfig) (retErr error) {
 	binds := map[string]bool{}
 	mountPoints := map[string]*volume.MountPoint{}
-	parser := volume.NewParser(container.Platform)
+	parser := volume.NewParser(container.OS)
 	defer func() {
 		// clean up the container mountpoints once return with error
 		if retErr != nil {
@@ -145,6 +147,13 @@ func (daemon *Daemon) registerMountPoints(container *container.Container, hostCo
 		if err != nil {
 			return err
 		}
+		needsSlavePropagation, err := daemon.validateBindDaemonRoot(bind.Spec)
+		if err != nil {
+			return err
+		}
+		if needsSlavePropagation {
+			bind.Propagation = mount.PropagationRSlave
+		}
 
 		// #10618
 		_, tmpfsExists := hostConfig.Tmpfs[bind.Destination]
@@ -175,7 +184,14 @@ func (daemon *Daemon) registerMountPoints(container *container.Container, hostCo
 	for _, cfg := range hostConfig.Mounts {
 		mp, err := parser.ParseMountSpec(cfg)
 		if err != nil {
-			return validationError{err}
+			return errdefs.InvalidParameter(err)
+		}
+		needsSlavePropagation, err := daemon.validateBindDaemonRoot(mp.Spec)
+		if err != nil {
+			return err
+		}
+		if needsSlavePropagation {
+			mp.Propagation = mount.PropagationRSlave
 		}
 
 		if binds[mp.Destination] {
@@ -256,7 +272,7 @@ func (daemon *Daemon) backportMountSpec(container *container.Container) {
 	container.Lock()
 	defer container.Unlock()
 
-	parser := volume.NewParser(container.Platform)
+	parser := volume.NewParser(container.OS)
 
 	maybeUpdate := make(map[string]bool)
 	for _, mp := range container.MountPoints {

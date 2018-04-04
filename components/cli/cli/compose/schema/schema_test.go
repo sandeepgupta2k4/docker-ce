@@ -3,7 +3,7 @@ package schema
 import (
 	"testing"
 
-	"github.com/stretchr/testify/assert"
+	"github.com/gotestyourself/gotestyourself/assert"
 )
 
 type dict map[string]interface{}
@@ -18,7 +18,7 @@ func TestValidate(t *testing.T) {
 		},
 	}
 
-	assert.NoError(t, Validate(config, "3.0"))
+	assert.NilError(t, Validate(config, "3.0"))
 }
 
 func TestValidateUndefinedTopLevelOption(t *testing.T) {
@@ -32,8 +32,7 @@ func TestValidateUndefinedTopLevelOption(t *testing.T) {
 	}
 
 	err := Validate(config, "3.0")
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "Additional property helicopters is not allowed")
+	assert.ErrorContains(t, err, "Additional property helicopters is not allowed")
 }
 
 func TestValidateAllowsXTopLevelFields(t *testing.T) {
@@ -43,7 +42,26 @@ func TestValidateAllowsXTopLevelFields(t *testing.T) {
 	}
 
 	err := Validate(config, "3.4")
-	assert.NoError(t, err)
+	assert.NilError(t, err)
+}
+
+func TestValidateSecretConfigNames(t *testing.T) {
+	config := dict{
+		"version": "3.5",
+		"configs": dict{
+			"bar": dict{
+				"name": "foobar",
+			},
+		},
+		"secrets": dict{
+			"baz": dict{
+				"name": "foobaz",
+			},
+		},
+	}
+
+	err := Validate(config, "3.5")
+	assert.NilError(t, err)
 }
 
 func TestValidateInvalidVersion(t *testing.T) {
@@ -57,8 +75,7 @@ func TestValidateInvalidVersion(t *testing.T) {
 	}
 
 	err := Validate(config, "2.1")
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "unsupported Compose file version: 2.1")
+	assert.ErrorContains(t, err, "unsupported Compose file version: 2.1")
 }
 
 type array []interface{}
@@ -82,5 +99,18 @@ func TestValidatePlacement(t *testing.T) {
 		},
 	}
 
-	assert.NoError(t, Validate(config, "3.3"))
+	assert.NilError(t, Validate(config, "3.3"))
+}
+
+func TestValidateIsolation(t *testing.T) {
+	config := dict{
+		"version": "3.5",
+		"services": dict{
+			"foo": dict{
+				"image":     "busybox",
+				"isolation": "some-isolation-value",
+			},
+		},
+	}
+	assert.NilError(t, Validate(config, "3.5"))
 }
